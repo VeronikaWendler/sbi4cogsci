@@ -1,6 +1,13 @@
 project:
   type: website
   output-dir: _site
+  # Positive globs only — Quarto 1.9 ignores "!" negations here. Anything not
+  # matched (READMEs, CONTRIBUTING.md, _-prefixed dirs) stays repo-only.
+  render:
+    - "*.qmd"                       # top-level site pages
+    - "tutorials/index.qmd"         # tutorials catalog
+    - "tutorials/*/*.ipynb"         # tutorial site pages (baked notebooks…)
+    - "tutorials/*/*.qmd"           # …or display-only qmd pages
 
 website:
   title: "SBI-4-CogSci"
@@ -17,6 +24,8 @@ website:
         text: Overview
       - href: schedule.qmd
         text: Schedule
+      - href: tutorials/index.qmd
+        text: Tutorials
       - href: organizers.qmd
         text: Organizers
       - href: application.qmd

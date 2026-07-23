@@ -2,3 +2,17 @@ project-cache/
 /.quarto/
 **/*.quarto_ipynb
 _site/
+
+# --- tutorials: instructor working files, any stack ---
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+__marimo__/
+.DS_Store
+.Rhistory
+.Rproj.user/
+*.asv
+# runtime-fetched data — never committed
+tutorials/**/data/
+# debris from local single-file `quarto render` runs
+tutorials/**/*_files/

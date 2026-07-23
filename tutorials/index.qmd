@@ -1,0 +1,23 @@
+---
+title: "Tutorials"
+---
+
+Hands-on materials for the summer school. Each tutorial is self-contained in
+its own folder in the
+[repository](https://github.com/stefanradev93/sbi4cogsci/tree/main/tutorials)
+and states its **own** requirements and a single run command in its README —
+there is no global environment and no required toolchain.
+
+<!-- Column notes for contributors (see CONTRIBUTING.md):
+     Tutorial  = link to the rendered site page if one exists, plain text otherwise.
+     Stack     = free text (e.g. "Python · marimo + uv", "MATLAB R2024b", "Colab", "none — slides").
+     Run       = ONE inline-code command, or "materials only".
+     Materials = always the GitHub folder link. -->
+
+| Tutorial | Day | Instructor | Stack | Run | Materials |
+|----------|-----|------------|-------|-----|-----------|
+| [Toy example — copy this pattern](toy_example/toy_example_page.ipynb) | — | (example) | Python · marimo + uv | `uvx marimo edit --sandbox toy_example.py` | [folder](https://github.com/stefanradev93/sbi4cogsci/tree/main/tutorials/toy_example) |
+
+*More tutorials will appear here as instructors add them (PyMC, HSSM,
+BayesFlow, MATLAB Deep Learning Toolbox, recurrent networks, VAEs, joint
+modeling, …).*
