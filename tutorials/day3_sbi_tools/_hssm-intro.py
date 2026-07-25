@@ -185,9 +185,102 @@ lan_idata = lan_model.sample(sampler="numpyro", draws=500, tune=500,
 print(az.summary(lan_model.traces, var_names=PARAMS, kind="stats").to_string())
 
 # %% [markdown]
-# ### Your own network, from any framework
+# ### Your own network — the JAX route, no ONNX, no torch
 #
-# The interop contract is **ONNX**, and it is deliberately narrow:
+# There are two ways to bring your own likelihood in. Start with the one that
+# needs **nothing extra installed**.
+#
+# HSSM will accept a plain **JAX function** as the likelihood. The contract is
+# the same single-trial shape as ONNX:
+#
+# > `f(data_i, *params) -> scalar`, where `data_i` is that trial's
+# > `[rt, choice]`. HSSM `jax.vmap`s it over trials and differentiates it for you.
+#
+# This matters because **BayesFlow's default Keras backend is JAX** — including
+# in this environment — so a trained approximator's `log_prob` already *is* a
+# JAX function. You can hand it straight over.
+#
+# Below, a hand-written surrogate stands in for that trained network, so the
+# demo runs in seconds. The plumbing is identical.
+
+# %%
+import jax.numpy as jnp
+from hssm.config import ModelConfig
+
+SIGMA = 0.45
+
+def single_trial_logp(data, v, a, z, t):
+    """Stand-in for a trained network's log_prob: lognormal RT x biased choice.
+
+    Smooth and finite everywhere in the parameter box — see the gotchas below
+    for why that is not optional.
+    """
+    rt, ch = data[0], data[1]
+    mu = jnp.log(a) - jnp.log(v**2 + 0.25) + t
+    lr = jnp.log(jnp.maximum(rt, 1e-6))
+    logp_rt = -lr - jnp.log(SIGMA) - 0.5 * jnp.log(2 * jnp.pi) \
+        - 0.5 * ((lr - mu) / SIGMA) ** 2
+    drive = 2.0 * v * a + 4.0 * (z - 0.5)
+    p_up = 1.0 / (1.0 + jnp.exp(-drive))
+    return logp_rt + jnp.where(ch > 0, jnp.log(p_up), jnp.log1p(-p_up))
+
+
+sim = hssm.simulate_data(model="ddm", theta=[0.9, 1.3, 0.5, 0.3], size=600,
+                         random_state=RANDOM_SEED)
+
+cfg = ModelConfig(
+    response=["rt", "response"],
+    list_params=["v", "a", "z", "t"],
+    choices=(-1, 1),
+    bounds={"v": (-3.0, 3.0), "a": (0.3, 2.5), "z": (0.1, 0.9), "t": (0.0, 1.0)},
+    backend="jax",
+)
+
+jax_model = hssm.HSSM(
+    data=sim,
+    model="my_jax_surrogate",              # unrecognised name -> custom mode
+    model_config=cfg,
+    loglik=single_trial_logp,              # a plain JAX function
+    loglik_kind="approx_differentiable",
+    p_outlier=0,
+)
+jax_model.sample(sampler="numpyro", draws=500, tune=500, chains=2, cores=1,
+                 random_seed=RANDOM_SEED, progressbar=False)
+print(az.summary(jax_model.traces, var_names=PARAMS, kind="stats").to_string())
+print("\ntrue values: v=0.9  a=1.3  z=0.5  t=0.3")
+print("divergences:", int(jax_model.traces.sample_stats["diverging"].values.sum()))
+
+# %% [markdown]
+# Parameters recover, and **torch was never installed**. That is the whole
+# point: if your network already lives in JAX, ONNX is an unnecessary hop.
+#
+# Those divergences are worth a moment. They are not a plumbing failure — they
+# are my surrogate's own geometry. Look at `mu`: `a`, `v` and `t` all push the
+# same location, so the three trade off along a ridge. **Yesterday afternoon's
+# lesson applies to surrogates too** — a badly conditioned likelihood is badly
+# conditioned no matter who wrote it.
+#
+# ::: {.callout-warning}
+# ## Three things that will freeze your chain
+# **Your function must be finite at HSSM's initial values.** HSSM initialises
+# drift at `v = 0`. A surrogate taking `log(|v|)` is `-inf` there, the chain
+# starts at `-inf`, and every draw diverges with the posterior pinned to the
+# initval. This looks like a broken sampler and is a broken likelihood.
+#
+# **Every parameter you declare must actually enter the function.** A parameter
+# the function ignores has an identically-zero gradient — a perfectly flat
+# direction NUTS cannot integrate.
+#
+# **Fixing a parameter (`t=0.3`) does not currently work with
+# `backend="jax"`** — it raises an `AssertionError` in pytensor's `specifyshape`
+# JAX dispatch. Keep parameters free, or narrow their bounds instead.
+# :::
+
+# %% [markdown]
+# ### The other route: ONNX, for cross-framework artifacts
+#
+# Use ONNX when the network must outlive the framework that trained it, or when
+# it came from PyTorch/sbi rather than JAX. The contract is deliberately narrow:
 #
 # > The graph takes **one** rank-1 input vector of shape `(n_params + n_data,)`
 # > — parameters concatenated with that trial's `[rt, choice]` — and returns a
@@ -215,10 +308,9 @@ print(az.summary(lan_model.traces, var_names=PARAMS, kind="stats").to_string())
 # For a model HSSM does not know, supply a `ModelConfig` giving `list_params`,
 # `choices`, `backend`, and — critically — `bounds` set to the **training box**.
 #
-# ### From BayesFlow
+# ### Exporting a BayesFlow network to ONNX
 #
-# A network trained with BayesFlow (this afternoon's session, and Radev's Day 3
-# tutorial) reaches HSSM through **LANfactory**:
+# If you do want the portable artifact, the export goes through **LANfactory**:
 #
 # ```python
 # import os
@@ -235,27 +327,34 @@ print(az.summary(lan_model.traces, var_names=PARAMS, kind="stats").to_string())
 # )
 # ```
 #
-# Then `hssm.HSSM(loglik="ddm_nle.onnx", loglik_kind="approx_differentiable")`,
-# exactly as above.
+# ::: {.callout-important}
+# ## This route requires torch, and there is no way around it
+# `transform_bayesflow_to_onnx` calls `torch.onnx.export`, which cannot trace a
+# JAX-backed Keras model. It checks `KERAS_BACKEND` and raises `RuntimeError` if
+# it is anything but `"torch"` — so you must set it **before** keras is imported,
+# and you must have torch installed.
 #
-# ::: {.callout-note}
-# ## Things that will cost you an afternoon
-# - `KERAS_BACKEND` must be `torch` **before** keras is imported —
-#   `torch.onnx.export` cannot trace a JAX-backed Keras model. The exporter
-#   raises `RuntimeError` if you forget, so at least it fails loudly.
+# LANfactory therefore pulls in torch, and is deliberately **not** part of this
+# workshop's shared environment. If you only need the likelihood inside HSSM,
+# use the JAX-callable route above and skip all of this. Reach for ONNX when the
+# artifact has to be portable — shared with collaborators, archived alongside a
+# paper, or produced by PyTorch/sbi rather than JAX in the first place.
+# :::
+#
+# Two more export constraints, if you go this way:
+#
 # - The CouplingFlow must be ONNX-friendly: `permutation=None`,
 #   `AffineTransform(clamp=False)` passed as an **instance**, `activation="silu"`
 #   (not `hard_silu`), and a trivial adapter.
 # - Leave `floatX` at its default `float64`. Flow exports can carry an int64
 #   sentinel that truncates to `-1` under float32 and corrupts the graph.
-# - LANfactory pulls in **torch**, so it is not part of this workshop's shared
-#   environment. Export offline; ship the `.onnx`.
-# :::
 #
-# There is a lower-level escape hatch too: if you already hold a pure-JAX
-# single-trial function, pass it as `loglik` with `backend="jax"` and skip ONNX
-# entirely. That is the recommended path for BayesFlow likelihood-ratio
-# estimators.
+# | | JAX callable | ONNX |
+# |---|---|---|
+# | extra install | none | torch (+ LANfactory) |
+# | works in this env | **yes** | no |
+# | portable artifact | no | **yes** |
+# | source frameworks | anything JAX (incl. BayesFlow) | BayesFlow, sbi, LANfactory, PyTorch |
 
 # %% [markdown]
 # ## 4. Where this goes — regressions on parameters
@@ -296,6 +395,9 @@ print(az.summary(lan_model.traces, var_names=PARAMS, kind="stats").to_string())
 #   `model.traces` with explicit `var_names`.
 # - `plot_quantile_probability` is the SSM fit check; aggregate densities hide
 #   conditional misfit.
+# - Two ways to bring your own likelihood: a **JAX callable** (nothing extra to
+#   install, and BayesFlow already runs on the JAX backend) or **ONNX**
+#   (portable, but needs torch). Prefer the callable unless you need the artifact.
+# - Both share one contract: **single trial in, scalar out**. HSSM vmaps it.
 # - For neural likelihoods, **bounds are the training region**. Outside them the
 #   answer is wrong rather than absent.
-# - ONNX is the interop contract: single-trial, rank-1, no `dynamic_axes`.
