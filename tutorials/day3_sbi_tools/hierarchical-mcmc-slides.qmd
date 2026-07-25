@@ -1,0 +1,83 @@
+---
+title: "Hierarchy changes the shape of the problem"
+subtitle: "MCMC for hierarchical Bayesian models — Day 3, 11:00"
+author: "Alexander Fengler"
+format:
+  revealjs:
+    theme: simple
+    slide-number: true
+    incremental: false
+    # Deliberately NOT embed-resources: in a website project Quarto ships
+    # reveal.js into _site/site_libs anyway, so embedding just duplicates ~4 MB
+    # per deck. For a portable single file to present from offline, render this
+    # one deck on its own:
+    #   quarto render tutorials/day3_sbi_tools/hierarchical-mcmc-slides.qmd \
+    #     --to revealjs -M embed-resources:true --output-dir .
+---
+
+## Three ways to model 20 participants
+
+::: {.incremental}
+- **Complete pooling** — one set of parameters for everyone.
+  Cheap, and wrong the moment participants actually differ.
+- **No pooling** — a separate fit per participant.
+  Honest about differences, terrible for participants with little data.
+- **Partial pooling** — participants are draws from a population.
+  Each estimate borrows strength from the others.
+:::
+
+. . .
+
+Partial pooling is the one we want. It is also the one that changes the
+*geometry* of the posterior.
+
+## What it costs in parameters
+
+A 4-parameter DDM, 20 participants:
+
+| Model | Free parameters |
+|---|---|
+| Complete pooling | 4 |
+| No pooling | 80 |
+| Partial pooling | 80 + 8 population-level = **88** |
+
+. . .
+
+Partial pooling has *more* parameters than no pooling — and yet it is better
+behaved statistically. The hyperparameters are what buy that.
+
+## But the sampler now sees this
+
+The population scale $\tau$ and the participant offsets $\theta_g$ are coupled:
+small $\tau$ forces every $\theta_g$ into a narrow band.
+
+The posterior is a **funnel** — wide at the mouth, arbitrarily narrow at the neck.
+
+::: {.callout-important}
+## The problem is not the shape, it is the curvature
+No single step size is both *stable* in the neck and *efficient* in the mouth.
+That is what breaks the sampler.
+:::
+
+## Poll
+
+> A hierarchical model reports $\hat{R} = 1.00$ and ESS in the thousands,
+> with 40 divergences. What should you conclude?
+>
+> **A.** It converged; divergences are a performance warning.
+> **B.** Run it longer.
+> **C.** Raise `target_accept` until they go away, then trust it.
+> **D.** The estimates may be biased, and none of the above fixes that.
+
+. . .
+
+**D.** Divergences signal that the integrator failed in a region the chain
+therefore *systematically under-visits*. The chain is not slow, it is wrong —
+and $\hat{R}$ cannot see it.
+
+## Where we are going
+
+1. Build Neal's funnel and watch it fail — **in the notebook**.
+2. Reparameterize, and watch it stop failing.
+3. Find the point where non-centering stops helping and starts hurting.
+4. Do it per-parameter, on a real SSM.
