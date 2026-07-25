@@ -59,6 +59,22 @@ No single step size is both *stable* in the neck and *efficient* in the mouth.
 That is what breaks the sampler.
 :::
 
+## How narrow is the neck?
+
+The conditional width of a group parameter is $e^{\tau/2}$:
+
+| $\tau$ | conditional SD | relative to $\tau = 2$ |
+|---|---|---|
+| $2.0$ | $2.72$ | 1× |
+| $0.0$ | $1.00$ | 2.7× narrower |
+| $-4.0$ | $0.135$ | 20× narrower |
+| $-8.0$ | $0.018$ | **150× narrower** |
+
+. . .
+
+A leapfrog step size stable at the bottom is uselessly small at the top. One
+global step size has to serve both.
+
 ## Poll
 
 > A hierarchical model reports $\hat{R} = 1.00$ and ESS in the thousands,
@@ -73,11 +89,73 @@ That is what breaks the sampler.
 
 **D.** Divergences signal that the integrator failed in a region the chain
 therefore *systematically under-visits*. The chain is not slow, it is wrong —
-and $\hat{R}$ cannot see it.
+and $\hat{R}$ cannot see it, because every chain fails the same way.
+
+## The fix is a change of coordinates
+
+::: {.columns}
+::: {.column width="50%"}
+**Centered**
+
+$$\theta_g \sim \mathcal{N}(\mu, \tau)$$
+
+Sample $\theta_g$ directly. Its scale depends on $\tau$ — that coupling *is*
+the funnel.
+:::
+::: {.column width="50%"}
+**Non-centered**
+
+$$z_g \sim \mathcal{N}(0, 1)$$
+$$\theta_g = \mu + \tau \cdot z_g$$
+
+Sample $z_g$, which knows nothing about $\tau$. The geometry is a ball.
+:::
+:::
+
+. . .
+
+Same distribution. Different **coordinates**. The sampler only ever sees the
+coordinates.
+
+## But not always
+
+::: {.callout-important}
+## "Always non-center" is wrong
+Which parameterization wins depends on whether the **prior** or the
+**likelihood** dominates each group.
+:::
+
+- **few observations per group** → prior dominates → **non-centered**
+- **many observations per group** → likelihood dominates → **centered**
+
+. . .
+
+With plenty of data per group, the non-centered form develops its *own*
+funnel — $z_g$ and $\tau$ become coupled through the likelihood instead.
+
+*(Papaspiliopoulos, Roberts & Sköld 2007; Betancourt & Girolami 2013)*
+
+## Which is why you want it per parameter
+
+A real SSM has both kinds in one model:
+
+- drift `v` — hundreds of trials per participant → **likelihood dominates**
+- a group-level scale over 14 participants → **prior dominates**
+
+. . .
+
+```python
+hssm.HSSM(..., noncentered={"v": False, "a": True})
+```
 
 ## Where we are going
 
 1. Build Neal's funnel and watch it fail — **in the notebook**.
 2. Reparameterize, and watch it stop failing.
-3. Find the point where non-centering stops helping and starts hurting.
+3. Find the crossover where non-centering stops helping.
 4. Do it per-parameter, on a real SSM.
+
+. . .
+
+Everything from here is live in
+[`hierarchical-mcmc.ipynb`](hierarchical-mcmc.ipynb).
