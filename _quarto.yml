@@ -1,8 +1,12 @@
 project:
   type: website
   output-dir: _site
-  # Positive globs only — Quarto 1.9 ignores "!" negations here. Anything not
-  # matched (READMEs, CONTRIBUTING.md, _-prefixed dirs) stays repo-only.
+  # Positive globs only. Anything not matched (READMEs, CONTRIBUTING.md) stays
+  # repo-only. Quarto also skips any path segment starting with "_" — files as
+  # well as dirs — regardless of these globs; that is how solution and draft
+  # notebooks (`_*.ipynb`) are kept off the site. Prefer the `_` prefix over
+  # "!" negations here: negations work on Quarto 1.10 but silently stopped
+  # short on 1.9, and CI installs an unpinned version.
   render:
     - "*.qmd"                       # top-level site pages
     - "tutorials/index.qmd"         # tutorials catalog

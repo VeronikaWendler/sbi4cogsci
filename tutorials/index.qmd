@@ -2,22 +2,28 @@
 title: "Tutorials"
 ---
 
-Hands-on materials for the summer school. Each tutorial is self-contained in
-its own folder in the
+Hands-on materials for the summer school. Each tutorial lives in its own folder
+in the
 [repository](https://github.com/stefanradev93/sbi4cogsci/tree/main/tutorials)
-and states its **own** requirements and a single run command in its README —
-there is no global environment and no required toolchain.
+and states its **own** requirements and how to run it. There is no repo-wide
+required toolchain: some tutorials run entirely in Google Colab, some are
+self-contained, and the BayesFlow/HSSM notebooks share a `uv` environment at
+the `tutorials/` root (see
+[`tutorials/README.md`](https://github.com/stefanradev93/sbi4cogsci/blob/main/tutorials/README.md)).
 
 <!-- Column notes for contributors (see CONTRIBUTING.md):
      Tutorial  = link to the rendered site page if one exists, plain text otherwise.
      Stack     = free text (e.g. "Python · marimo + uv", "MATLAB R2024b", "Colab", "none — slides").
-     Run       = ONE inline-code command, or "materials only".
-     Materials = always the GitHub folder link. -->
+     Run       = ONE inline-code command, a link for Colab-hosted tutorials, or "materials only".
+     Materials = always the GitHub folder link.
+     One row per rendered page (a day folder holding several sessions gets several rows). -->
 
 | Tutorial | Day | Instructor | Stack | Run | Materials |
 |----------|-----|------------|-------|-----|-----------|
 | [Toy example — copy this pattern](toy_example/toy_example_page.ipynb) | — | (example) | Python · marimo + uv | `uvx marimo edit --sandbox toy_example.py` | [folder](https://github.com/stefanradev93/sbi4cogsci/tree/main/tutorials/toy_example) |
+| [Amortized Bayesian inference for the DMC](day3_sbi_tools/dmc-bayesflow.ipynb) | 3 | Radev, Schaefer | Python · BayesFlow 2 (shared uv env) | `cd tutorials && uv sync` | [folder](https://github.com/stefanradev93/sbi4cogsci/tree/main/tutorials/day3_sbi_tools) |
+| [LaseNet — recurrent networks for dynamic data](day3_sbi_tools/lasenet_tutorial.ipynb) | 3 | Pan | Colab (nothing to install) | [Open in Colab](https://colab.research.google.com/drive/1d9y-Svzs2z8EBRb5sY26Ni-n4p4tmd_W?usp=sharing) | [folder](https://github.com/stefanradev93/sbi4cogsci/tree/main/tutorials/day3_sbi_tools) |
+| [Single-trial integrative joint modeling](day4_complex_joint/demo_single_trial_integrative_joint_modeling.ipynb) | 4 | Nunez | Colab (nothing to install) | [workshop steps](https://github.com/mdnunez/single_trial_nddm_compare/blob/workshop_demo/workshop_steps.md) | [folder](https://github.com/stefanradev93/sbi4cogsci/tree/main/tutorials/day4_complex_joint) |
 
-*More tutorials will appear here as instructors add them (PyMC, HSSM,
-BayesFlow, MATLAB Deep Learning Toolbox, recurrent networks, VAEs, joint
-modeling, …).*
+*More tutorials will appear here as instructors add them (PyMC, HSSM, MATLAB
+Deep Learning Toolbox, VAEs, …).*

@@ -5,12 +5,14 @@ optional layer — adopt any, none, or all. Use your own stack.
 
 ## The contract (every tutorial)
 
-1. One folder: `tutorials/d<day>_<short_name>/` (e.g. `d3_matlab_dl/`).
+1. One folder: `tutorials/day<day>_<short_name>/` (e.g. `day3_sbi_tools/`).
+   A folder may hold several sessions from the same day.
 2. A `README.md` in it (copy `_template/README.md`) stating: title,
    instructor, day/session, requirements, and EXACTLY ONE run command —
    or the sentence "Materials only, not runnable."
-3. One row in `tutorials/index.qmd` (see the column notes at the top of that
-   file).
+3. One row in `tutorials/index.qmd` per **rendered page** — so a day folder
+   with three site pages gets three rows (see the column notes at the top of
+   that file).
 4. Nothing in your folder may need to execute when the site builds — the
    Pages CI has no Python/R/MATLAB. Site builds never run code
    (`tutorials/_metadata.yml` sets `execute: enabled: false`; do not
@@ -31,8 +33,11 @@ optional layer — adopt any, none, or all. Use your own stack.
   (a) a [PEP 723](https://peps.python.org/pep-0723/) header in your
   script/notebook — runs via `uv run --script` / `uvx marimo edit --sandbox`;
   or (b) a tutorial-local `pyproject.toml` + `uv.lock` (`uv sync` inside your
-  folder); or (c) a shared env: if ≥2 tutorials need the same stack we create
-  `tutorials/_envs/<stack>/` and both point at it — don't pre-create one.
+  folder); or (c) the shared BayesFlow/HSSM/JAX env at
+  `tutorials/pyproject.toml` (`cd tutorials && uv sync`, documented in
+  `tutorials/README.md`) — join it if your stack already fits, but don't add
+  heavy single-tutorial deps to it. Need a different shared stack? Ask before
+  creating a second one.
 - **marimo**: `.py` notebook as source of truth + baked `.ipynb` export as
   the site page. Working example: `toy_example/`. Name the export
   `<name>_page.ipynb`, NOT `<name>.ipynb` — Quarto silently skips a notebook
@@ -50,4 +55,10 @@ optional layer — adopt any, none, or all. Use your own stack.
 - Only `*.ipynb` and `*.qmd` at the top level of your folder become site
   pages (`_quarto.yml` render globs); `README.md` and other `.md` files stay
   repo-only. Don't commit draft `.ipynb`/`.qmd` you don't want published.
+- **Solutions and drafts: prefix the filename with `_`.** Quarto skips
+  `_`-prefixed files, so `_lasenet_tutorial_solution.ipynb` stays in the repo
+  but never becomes a page. This is the ONLY thing standing between an answer
+  key and a public URL — the repo is public, so a `_` file is still readable
+  on GitHub. If students must not see it at all before the session, keep it
+  off `main` until afterwards.
 - Don't commit `.venv/`, `data/`, checkpoints, `__marimo__/` (gitignored).
