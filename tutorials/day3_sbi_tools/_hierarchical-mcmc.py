@@ -337,12 +337,15 @@ def build(noncentered):
 
 
 mixed = build({"v": False, "a": True})
-mixed.build()
 
-offsets = sorted(n for n in mixed.pymc_model.named_vars if n.endswith("_offset"))
-print("nodes carrying an _offset (i.e. non-centered):")
-for n in offsets:
-    print("   ", n)
+# The PyMC graph is materialised at construction — `model.pymc_model` is ready
+# to inspect, and there is no `.build()` to call.
+participant_nodes = sorted(n for n in mixed.pymc_model.named_vars
+                           if "participant_id" in n)
+print("participant-level nodes:")
+for n in participant_nodes:
+    mark = "  <- non-centered" if n.endswith("_offset") else ""
+    print(f"    {n}{mark}")
 
 # %% [markdown]
 # The `_offset` nodes are the structural fingerprint of the non-centered
@@ -379,7 +382,7 @@ for n in offsets:
 #
 # ```python
 # for setting in [True, False]:
-#     m = build(setting); m.build()
+#     m = build(setting)
 #     offs = sorted(n for n in m.pymc_model.named_vars if n.endswith("_offset"))
 #     print(setting, "->", offs)
 # ```
