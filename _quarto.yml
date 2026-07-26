@@ -62,6 +62,14 @@ website:
         Supported by the <br><strong>William K. and Katherine W. Estes Fund</strong>
       </div>
 
+# NOTE on math: we stay on Quarto's default MathJax, which is vendored locally,
+# and we avoid `\mathcal{...}`. MathJax's HTML output asks the browser for a
+# calligraphic font that is not present here, so `\mathcal{N}` rendered as a
+# tofu box. Switching to KaTeX fixes the glyph but pulls katex@latest from a CDN
+# — an unpinned external dependency that also breaks presenting offline. Writing
+# `\text{Normal}(...)` instead costs nothing, always renders, and is clearer for
+# an audience with mixed maths backgrounds.
+
 format:
   html:
     theme: cosmo

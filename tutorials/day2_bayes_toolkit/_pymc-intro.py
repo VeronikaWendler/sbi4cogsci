@@ -228,9 +228,9 @@ except TypeError as e:
 # mean and want the posterior over that mean. Written out,
 #
 # $$
-# \mu \sim \mathcal{N}(0,\ 10), \qquad
+# \mu \sim \text{Normal}(0,\ 10), \qquad
 # \sigma \sim \text{HalfNormal}(5), \qquad
-# y_i \mid \mu, \sigma \;\sim\; \mathcal{N}(\mu,\ \sigma)
+# y_i \mid \mu, \sigma \;\sim\; \text{Normal}(\mu,\ \sigma)
 # \quad \text{for } i = 1,\dots,60 .
 # $$
 #
@@ -567,13 +567,13 @@ fig.tight_layout()
 # Same machinery, one step up:
 #
 # $$
-# \beta_0 \sim \mathcal{N}(0,\ 5), \qquad
-# \beta_1 \sim \mathcal{N}(0,\ 5), \qquad
+# \beta_0 \sim \text{Normal}(0,\ 5), \qquad
+# \beta_1 \sim \text{Normal}(0,\ 5), \qquad
 # \sigma \sim \text{HalfNormal}(5),
 # $$
 # $$
 # y_i \mid \beta_0, \beta_1, \sigma \;\sim\;
-# \mathcal{N}(\beta_0 + \beta_1 x_i,\ \sigma).
+# \text{Normal}(\beta_0 + \beta_1 x_i,\ \sigma).
 # $$
 #
 # Only the **mean** changed: it is now a function of a covariate instead of a
@@ -885,9 +885,9 @@ fig.tight_layout()
 # To see it you need a model where something upstream exists. Take a chain:
 #
 # $$
-# z \sim \mathcal{N}(0, 1), \qquad
-# x \mid z \sim \mathcal{N}(z,\ 0.5), \qquad
-# y \mid x \sim \mathcal{N}(x,\ 0.5).
+# z \sim \text{Normal}(0, 1), \qquad
+# x \mid z \sim \text{Normal}(z,\ 0.5), \qquad
+# y \mid x \sim \text{Normal}(x,\ 0.5).
 # $$
 #
 # Now ask what we learn about $z$ in two scenarios: we **observe** $x = 2$,

@@ -46,30 +46,151 @@ DRAWS, TUNE, CHAINS = 1000, 1000, 4
 print("pymc", pm.__version__, "| arviz", az.__version__)
 
 # %% [markdown]
-# ## 1. Neal's funnel — the geometry, before any data
+# ## 1. First: why would you want a hierarchy at all?
+#
+# Most of this session is about a *problem* hierarchical models create. That
+# ordering is misleading unless we first establish what they buy you, so start
+# there.
+#
+# The setting is the one real cognitive data is always in: **unbalanced**. Some
+# participants completed hundreds of trials, some barely turned up.
+
+# %%
+import sbi4cogsci_figures as F      # shared with the slide deck — one source
+
+pool = F.pooling_experiment(seed=RANDOM_SEED)
+counts = pool["trial_counts"]
+print(f"{counts.size} participants, {pool['n_trials_total']} trials total")
+print(f"trials per participant: {counts.min()} to {counts.max()}")
+print(f"  the five thinnest: {sorted(counts)[:5]}")
+
+# %% [markdown]
+# Each participant has their own drift rate, drawn from a population. We fit the
+# same data twice — **no pooling** (each participant estimated alone) and
+# **partial pooling** (participants drawn from an estimated population) — and
+# compare both against the drift rates we actually used.
+#
+# `a`, `z` and `t` are held at their true values so that the comparison is about
+# pooling and nothing else.
+
+# %%
+summary = F.pooling_summary(pool)
+print(f"{'':18s} {'MAE (all)':>10s} {'n < 30':>10s} {'n >= 30':>10s}")
+for key, label in [("no_pooling", "no pooling"), ("partial_pooling", "partial pooling")]:
+    d = summary[key]
+    print(f"{label:18s} {d['mae_all']:10.3f} {d['mae_low']:10.3f} {d['mae_high']:10.3f}")
+print(f"\nimprovement where trials < 30: {summary['low_n_improvement_pct']:.0f}%")
+
+# %%
+F.fig_shrinkage(pool)
+
+# %% [markdown]
+# Every arrow is one participant, running from their no-pooling estimate to
+# their partial-pooling one. The arrows are long on the left and invisible on
+# the right: **pooling moves exactly the participants who could not speak for
+# themselves, and leaves the others alone.**
+
+# %%
+F.fig_pooling_error(pool)
+
+# %% [markdown]
+# ::: {.callout-note}
+# ## What pooling actually is
+# With five trials, a no-pooling estimate has almost no information to work
+# with, so it falls back on whatever prior you happened to write down. Partial
+# pooling also falls back on a prior — but on the **population**, estimated from
+# the participants who did have data.
+#
+# **Pooling replaces an arbitrary prior with an earned one.** That is the whole
+# idea, and everything after this is the price you pay for it.
+# :::
+#
+# > **Poll.** Partial pooling improved the sparse participants a lot and the
+# > dense ones not at all. Why not at all?
+# >
+# > **A.** The sampler converged better for them.
+# > **B.** Their likelihood already dominates the prior, so shrinkage has
+# >   almost nothing to pull against.
+# > **C.** The population distribution does not apply to them.
+# > **D.** They were closer to the population mean to begin with.
+#
+# <details>
+# <summary>Answer</summary>
+#
+# **B.** Shrinkage weight is roughly $\tau^2 / (\tau^2 + \mathrm{se}_g^2)$ — it
+# depends on how precise *that participant's* own estimate is. With 600 trials
+# the standard error is tiny, the weight goes to ~1, and the estimate barely
+# moves. With 5 trials the standard error is large and the population wins.
+#
+# Hold on to this: it is the same quantity that decides which
+# **parameterization** each group wants, later in this notebook.
+#
+# </details>
+
+# %% [markdown]
+# ### Did we not just add parameters?
+#
+# Counted naively, partial pooling is the **bigger** model — it has everything
+# no-pooling has, plus $\mu$ and $\tau$. And it generalised better. Either
+# Occam's razor is wrong, or we are counting the wrong thing.
+#
+# The right thing to count is the **effective** number of parameters, `p_loo`,
+# which we already computed above.
+
+# %%
+print(f"{'':18s} {'nominal':>9s} {'effective (p_loo)':>19s}")
+for key, label in [("no_pooling", "no pooling"), ("partial_pooling", "partial pooling")]:
+    print(f"{label:18s} {pool['nominal'][key]:9d} {pool['p_loo'][key]:19.1f}")
+
+# %% [markdown]
+# Two more nominal parameters; roughly **four fewer effective** ones.
+#
+# A parameter costs a full unit only if the data is free to put it anywhere.
+# Under pooling each $v_g$ is pulled toward $\mu$, so it is no longer free — it
+# costs a *fraction* of a parameter. The two hyperparameters are not two extra
+# freedoms; they are two knobs that **remove** freedom from the other twenty,
+# and $\tau$ is a regularisation strength *learned from the data* rather than
+# guessed by you.
+#
+# ::: {.callout-warning}
+# ## Two honest caveats before you quote this number
+# **The gap depends on how sparse your groups are.** Ours has participants with
+# five trials, and those shrink hard. Re-run with 600 trials for everyone and
+# the gap nearly closes: each participant's own data identifies their drift,
+# shrinkage has nothing to pull against, and `p_loo` approaches the nominal
+# count. The effective-parameter story is a statement about *your data*, not
+# about hierarchical models in the abstract.
+#
+# **`elpd_loo` was essentially a tie.** Trial-level LOO is dominated by the
+# participants who had plenty of trials, so it barely notices the improvement
+# for the sparse ones. Fewer effective parameters, same trial-level predictive
+# score — the benefit showed up in the **estimates**, which is what we measured
+# before. If you care about generalising to a *new participant*, the matching
+# quantity is leave-one-participant-out, not this.
+# :::
+#
+# ::: {.callout-note}
+# ## ArviZ 1.x naming
+# `az.loo(idata)` returns an object whose attribute is **`.p`**, although it
+# *prints* as `p_loo`. And `az.waic` no longer exists — ArviZ 1.0 removed it in
+# favour of PSIS-LOO. Nearly every tutorial you find online predates this.
+# :::
+
+# %% [markdown]
+# ## 2. Neal's funnel — the geometry, before any data
 #
 # Neal (2003) reduced the whole problem to two lines:
 #
-# $$v \sim \mathcal{N}(0, 3), \qquad x_i \mid v \sim \mathcal{N}\!\left(0, e^{v/2}\right)$$
+# $$v \sim \text{Normal}(0, 3), \qquad x_i \mid v \sim \text{Normal}\!\left(0, e^{v/2}\right)$$
 #
 # There is no data and no likelihood. This is a *prior* — the shape a
 # hierarchical model has before the data says anything. `v` plays the role of
 # a log population scale, and `x` the role of group-level parameters.
 
 # %%
-v_prior = rng.normal(0, 3, 40000)
-x_prior = rng.normal(0, np.exp(v_prior / 2))
-
-fig, ax = plt.subplots(figsize=(6.4, 4.4))
-keep = np.abs(x_prior) < 25
-ax.plot(x_prior[keep], v_prior[keep], "o", color=S.PRIMARY, ms=1.5, alpha=0.15,
-        ls="none", label="prior draws")
-ax.axhspan(-9, -3, color=S.DIVERGENT, alpha=0.10)
-S.annotate(ax, "the neck:\nwidth shrinks like $e^{v/2}$", xy=(0, -6), xytext=(9, -7.5))
-ax.set(title="Neal's funnel", xlabel="$x_1$", ylabel="$v$  (log scale)",
-       xlim=(-25, 25), ylim=(-9, 9))
-ax.legend(loc="upper right")
-fig.tight_layout()
+# Same function the slide deck bakes its copy of this figure from.
+x_prior, v_prior = F.funnel_draws(n=40_000, sd_v=3.0, seed=RANDOM_SEED)
+F.fig_funnel(x_prior, v_prior)
 
 # %% [markdown]
 # At $v = 2$ the conditional standard deviation of $x$ is $e^{1} \approx 2.7$.
@@ -85,15 +206,15 @@ fig.tight_layout()
 # :::
 
 # %% [markdown]
-# ## 2. Sampling it, both ways
+# ## 3. Sampling it, both ways
 #
 # **Centered** — sample $x$ directly, with its scale depending on $v$:
 #
-# $$v \sim \mathcal{N}(0,3), \qquad x \sim \mathcal{N}(0, e^{v/2})$$
+# $$v \sim \text{Normal}(0,3), \qquad x \sim \text{Normal}(0, e^{v/2})$$
 #
 # **Non-centered** — sample a standard normal and rescale it:
 #
-# $$v \sim \mathcal{N}(0,3), \qquad \tilde{x} \sim \mathcal{N}(0,1),
+# $$v \sim \text{Normal}(0,3), \qquad \tilde{x} \sim \text{Normal}(0,1),
 #   \qquad x = e^{v/2}\,\tilde{x}$$
 #
 # These describe the *same distribution*. They are different **coordinate
@@ -213,7 +334,7 @@ print(pd.DataFrame(rows).to_string(index=False, float_format=lambda x: f"{x:8.3f
 # diagnostic aid, not a fix. The fix is to change coordinates.
 
 # %% [markdown]
-# ## 3. Non-centered is not always better
+# ## 4. Non-centered is not always better
 #
 # This is the part most tutorials get wrong. The choice depends on whether the
 # **prior** or the **likelihood** dominates each group's posterior
@@ -298,6 +419,42 @@ fig.tight_layout()
 # Which is why you want the choice to be **per parameter**.
 # :::
 #
+# ### What that looks like in the geometry
+#
+# The ESS curves say *that* the advantage reverses. This says *why*. Four fits —
+# both parameterizations, at weak and strong data — each plotted in the
+# coordinates its own sampler actually works in, against $\log\tau$, with
+# divergences overlaid.
+
+# %%
+geom = F.geometry_experiment(seed=RANDOM_SEED)
+F.fig_geometry_grid(geom)
+
+# %%
+print(f"{'parameterization':16s} {'obs/group':>10s} {'divergences':>12s}")
+for (n_obs, par), d in geom["results"].items():
+    print(f"{par:16s} {n_obs:10d} {d['n_divergences']:12d}")
+
+# %% [markdown]
+# Read the four panels as a 2×2. **Top-left**: the classic funnel, pinching
+# downward, divergences packed into the neck. **Bottom-right**: the mirror
+# image — an *inverted* funnel, where holding $\theta_g$ fixed while $\tau$
+# grows forces $z_g$ to shrink, and the divergences sit at the **top**.
+#
+# The diagonal is the lesson. Centered is catastrophic with weak data and
+# flawless with strong data; non-centered does not improve as data accumulates,
+# it gets slightly worse.
+#
+# ::: {.callout-note}
+# ## And yet non-centered is still the sensible default
+# The inverted funnel is *suppressed by partial pooling itself* — the more
+# groups there are informing $\tau$, the more its bad end gets cut off.
+# Betancourt puts it sharply: **"the pathological behavior is the worst exactly
+# when the partial pooling is strongest."** So the reversal usually costs you
+# efficiency rather than correctness, which is why "non-center by default, and
+# reconsider when a group is data-rich" is reasonable advice.
+# :::
+#
 # ::: {.callout-warning}
 # ## Do not memorise the crossover point
 # This sweep holds the **number of groups fixed at 8** and varies only the
@@ -311,7 +468,7 @@ fig.tight_layout()
 # :::
 
 # %% [markdown]
-# ## 4. Per-parameter parameterization in HSSM
+# ## 5. Per-parameter parameterization in HSSM
 #
 # A real SSM has parameters of both kinds in the same model. Drift `v` is often
 # estimated from plenty of trials per participant; a boundary or non-decision
@@ -408,18 +565,34 @@ for n in participant_nodes:
 # </details>
 
 # %% [markdown]
-# ## 5. Where this goes next
+# ## 6. Where this goes next
 #
 # Centered and non-centered are the two endpoints of a continuum. **VIP**
 # (variationally inferred parametrization; Gorinova, Moore & Hoffman, ICML 2020)
 # learns a per-variable $\lambda \in [0,1]$:
 #
-# $$\theta = \mu + \sigma^{1-\lambda}\left(\eta - \lambda\mu\right)$$
+# $$\tilde{\theta} \sim \text{Normal}\!\left(\lambda\mu,\ \sigma^{\lambda}\right),
+#   \qquad
+#   \theta = \mu + \sigma^{1-\lambda}\left(\tilde{\theta} - \lambda\mu\right)$$
 #
-# so $\lambda = 0$ is centered, $\lambda = 1$ is non-centered, and the optimiser
-# picks the point in between for **each** variable. It is available in PyMC as
-# `pymc_extras.model.transforms.autoreparam.vip_reparametrize`, and the paper
-# shows learned mixed parameterizations beating *both* fixed extremes.
+# Check the endpoints, because the convention is easy to get backwards:
+# $\lambda = 1$ gives $\theta = \tilde{\theta} \sim \text{Normal}(\mu, \sigma)$,
+# which is **centered**; $\lambda = 0$ gives $\theta = \mu + \sigma\tilde{\theta}$
+# with $\tilde{\theta} \sim \text{Normal}(0,1)$, which is **non-centered**.
+#
+# The optimiser picks the point in between for **each** variable, and the paper
+# reports a "modest but real" gain at intermediate $\lambda$ when the data is
+# neither weak nor strong. It is available in PyMC as
+# `pymc_extras.model.transforms.autoreparam.vip_reparametrize`.
+#
+# ::: {.callout-note}
+# ## The experts disagree about how much this buys you
+# Betancourt's position is that "for any given likelihood function a
+# partially-centered parameterization may perform better … but in practice the
+# differences are usually negligible." Gorinova et al. measure a real if modest
+# improvement. Both can be true: **which groups** you center matters far more
+# than how precisely you center each one — which is the next section.
+# :::
 #
 # ## What to take away
 #

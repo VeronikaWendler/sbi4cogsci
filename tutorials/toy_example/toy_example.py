@@ -102,7 +102,7 @@ def _(TRUE_MU, mo, n_slider, post_mean, post_var):
     mo.md(
         f"""
     With $n = {n_slider.value}$ observations the posterior is
-    $\\mu \\mid x \\sim \\mathcal{{N}}({post_mean:.2f}, {post_var**0.5:.2f}^2)$,
+    $\\mu \\mid x \\sim \\text{{Normal}}({post_mean:.2f}, {post_var**0.5:.2f}^2)$,
     concentrating around the true value ${TRUE_MU}$ as you increase the slider —
     the whole notebook re-runs reactively.
 

@@ -4,30 +4,28 @@
 #     text_representation:
 #       extension: .py
 #       format_name: percent
+#       format_version: '1.3'
 #   kernelspec:
-#     display_name: Python 3
+#     display_name: .venv
 #     language: python
 #     name: python3
 # ---
 
 # %% [markdown]
-# # Toy models, MCMC, and when inference falls apart
+# # MCMC methods, and when inference falls apart
 #
-# **Day 2, 14:30–15:30 — 60 minutes.** Alexander Fengler.
+# **Day 2, 15:00 — 30 minutes.** Alexander Fengler.
 #
-# Two halves, one idea.
+# Everything you fitted this morning and at 14:30 converged quietly. That is
+# not guaranteed, and the failures teach more than the successes. This session
+# has two halves:
 #
-# - **Half A (14:30).** Samplers on a posterior we know exactly. What makes a
-#   posterior hard, and what different samplers do about it.
-# - **Half B (15:00).** The same lesson on a real cognitive model — where the
-#   difficulty is created not by the sampler but by the **experiment design**.
-#
-# The thread running through both: *a posterior can be perfectly well-defined
-# and still be badly conditioned*, and badly conditioned posteriors break
-# samplers in ways that are easy to miss and easy to misdiagnose.
+# 1. **what MCMC is actually doing** — including writing a sampler from scratch
+#    in ten lines, so it stops being a black box;
+# 2. **what makes a posterior hard**, on the cognitive model you just fitted.
 
 # %%
-import sys, pathlib, time, warnings
+import sys, pathlib, warnings, time
 sys.path.insert(0, str(pathlib.Path.cwd().parent))  # -> tutorials/
 
 import numpy as np
@@ -43,533 +41,377 @@ warnings.filterwarnings("ignore")
 RANDOM_SEED = sum(map(ord, "sbi4cogsci-mcmc"))
 rng = np.random.default_rng(RANDOM_SEED)
 
-# Sampling budgets. Kept modest so the whole notebook re-runs in a few minutes;
-# raise them if you want tighter estimates.
-DRAWS, TUNE, CHAINS = 1000, 1000, 4      # the main DDM fits
-DRAWS_CMP, TUNE_CMP = 1500, 1000         # the sampler comparison in B.4
-
 print("pymc", pm.__version__, "| arviz", az.__version__)
 
 # %% [markdown]
-# ## Half A — samplers on a posterior we can check
+# ## 1. What is MCMC actually trying to do?
 #
-# ### A.1 A target with no unknowns
+# We have a distribution $\pi(\theta)$ over some parameter space, and we want
+# to compute expectations under it:
 #
-# We use a bivariate normal with correlation $\rho$, written so that each
-# variable is its own node:
+# $$
+# \mathbb{E}_{\pi}[f] \;=\; \int f(\theta)\, \pi(\theta) \, d\theta .
+# $$
 #
-# $$x \sim \mathcal{N}(0, 1), \qquad y \mid x \sim \mathcal{N}(\rho x, \sqrt{1-\rho^2})$$
+# A posterior mean is $f(\theta) = \theta$; a credible interval is a couple of
+# quantiles; a posterior predictive is an expectation of the likelihood. All of
+# them are integrals against $\pi$.
 #
-# The marginals are both standard normal and $\mathrm{corr}(x,y) = \rho$ — we
-# know every answer in advance, so any disagreement is the sampler's fault, not
-# the model's.
+# In more than two or three dimensions those integrals are hopeless
+# analytically and hopeless on a grid. So we give up on computing them and
+# instead **draw samples** $\theta^{(1)}, \dots, \theta^{(N)} \sim \pi$ and
+# average:
 #
-# Writing it as two scalar nodes rather than one 2-vector matters: PyMC then
-# assigns a **separate step method to each**, so Metropolis updates one
-# coordinate at a time. That is the axis-aligned behaviour we want to expose.
+# $$
+# \mathbb{E}_{\pi}[f] \;\approx\; \frac{1}{N} \sum_{i=1}^{N} f\!\left(\theta^{(i)}\right).
+# $$
+#
+# ::: {.callout-note}
+# ## $\pi$ does not have to be a posterior
+# Nothing above mentions Bayes. MCMC is a general recipe for sampling from *any*
+# distribution you can evaluate up to a constant — it is used in statistical
+# physics, combinatorial optimisation and rendering. We happen to point it at
+# posteriors, and for the first examples below $\pi$ will just be a distribution
+# we picked because we know the right answer.
+# :::
+#
+# ### The normalizing constant, and why we can ignore it
+#
+# For a posterior, Bayes' rule says
+#
+# $$
+# \pi(\theta) \;=\; p(\theta \mid y) \;=\;
+# \frac{p(y \mid \theta)\, p(\theta)}{p(y)},
+# \qquad p(y) = \int p(y \mid \theta) p(\theta)\, d\theta .
+# $$
+#
+# The numerator is easy: it is the likelihood times the prior, both of which you
+# wrote down. The denominator $p(y)$ — the **evidence** — is an integral over
+# the whole parameter space, and it is exactly the kind of integral we just
+# admitted we cannot do.
+#
+# The escape is that **every MCMC algorithm only ever looks at ratios**. Write
+# the unnormalised density as $\tilde{\pi}(\theta) = p(y \mid \theta)p(\theta)$,
+# so $\pi = \tilde{\pi} / p(y)$. Then for any two points,
+#
+# $$
+# \frac{\pi(\theta')}{\pi(\theta)}
+# \;=\; \frac{\tilde{\pi}(\theta') / p(y)}{\tilde{\pi}(\theta) / p(y)}
+# \;=\; \frac{\tilde{\pi}(\theta')}{\tilde{\pi}(\theta)} .
+# $$
+#
+# **$p(y)$ cancels.** That single cancellation is what makes Bayesian
+# computation possible at all: you never need the evidence to *sample* the
+# posterior — only to compare whole models against each other.
+
+# %% [markdown]
+# ## 2. A Metropolis sampler in ten lines
+#
+# The oldest MCMC algorithm, and still the clearest. From the current point
+# $\theta$:
+#
+# 1. **propose** a nearby point, $\theta' = \theta + \varepsilon$ with
+#    $\varepsilon \sim \text{Normal}(0, s^2)$;
+# 2. **accept** it with probability
+#    $\alpha = \min\!\left(1,\ \tilde{\pi}(\theta')/\tilde{\pi}(\theta)\right)$;
+# 3. if accepted move there, otherwise **stay put and record the current point
+#    again**.
+#
+# Because the proposal is symmetric, that ratio is the whole rule. Step 3 is the
+# part people find strange: rejecting does not mean discarding the iteration, it
+# means the chain repeats itself — which is how low-density regions end up
+# visited proportionally *less*, rather than never.
 
 # %%
-def correlated_gaussian(rho):
-    with pm.Model() as model:
-        x = pm.Normal("x", 0.0, 1.0)
-        pm.Normal("y", rho * x, np.sqrt(1.0 - rho**2))
-    return model
+def metropolis(log_target, start, n_steps=20_000, step_size=1.0, seed=0):
+    """Random-walk Metropolis. `log_target` need only be correct up to a constant."""
+    rng = np.random.default_rng(seed)
+    theta = np.atleast_1d(np.asarray(start, dtype=float))
+    logp = log_target(theta)
+    chain, n_accept = np.empty((n_steps, theta.size)), 0
 
+    for i in range(n_steps):
+        proposal = theta + rng.normal(0.0, step_size, theta.size)
+        logp_prop = log_target(proposal)
+        # accept with probability min(1, pi(prop)/pi(theta)) — in logs
+        if np.log(rng.uniform()) < logp_prop - logp:
+            theta, logp = proposal, logp_prop
+            n_accept += 1
+        chain[i] = theta
 
-def autocorr(posterior, var="x"):
-    """Autocorrelation function of a posterior variable, via ArviZ.
-
-    In ArviZ 1.x the numeric ACF lives on the `.azstats` accessor rather than as
-    a top-level `az.autocorr` function — this is exactly what `az.plot_autocorr`
-    calls internally. Returns lags along the `draw` dimension.
-    """
-    return posterior[var].azstats.autocorr(dim=("chain", "draw"))
-
-
-SAMPLERS = {
-    "Metropolis": (lambda: pm.Metropolis(), S.NAIVE),
-    "Slice": (lambda: pm.Slice(), S.ALT),
-    "NUTS": (None, S.PRIMARY),
-}
-
-
-def run(rho, sampler_name, draws=4000, tune=1000, seed=RANDOM_SEED):
-    step_factory, _ = SAMPLERS[sampler_name]
-    with correlated_gaussian(rho):
-        kw = dict(draws=draws, tune=tune, chains=2, cores=1,
-                  progressbar=False, random_seed=seed)
-        t0 = time.time()
-        if step_factory is None:
-            # Ask for PyMC's own NUTS explicitly. With nuts_sampler unset,
-            # pm.sample() silently prefers nutpie when it is installed, and you
-            # would be timing a different implementation than you think.
-            idata = pm.sample(nuts_sampler="pymc", **kw)
-        else:
-            idata = pm.sample(step=step_factory(), **kw)
-        wall = time.time() - t0
-    post = idata.posterior.dataset            # DataTree node -> Dataset
-    return idata, post, wall
+    return chain, n_accept / n_steps
 
 
 # %% [markdown]
-# ### A.2 Predict before you run
-#
-# For an **exact Gibbs** sampler on this target — one that draws each coordinate
-# from its exact conditional — the lag-1 autocorrelation is exactly $\rho^2$.
-# Under the usual geometric-decay approximation that gives
-#
-# $$\frac{\mathrm{ESS}}{N} \approx \frac{1-\rho^2}{1+\rho^2}$$
-#
-# So at $\rho = 0.99$ exact Gibbs keeps roughly **1%** of its draws.
-#
-# Treat that as a **benchmark, not a prediction for Metropolis**. Exact Gibbs is
-# the best an axis-aligned method can do, because it makes the largest possible
-# move along each axis. PyMC's `Metropolis` random-walks *within* each
-# conditional instead of sampling it, so it should come out **worse** than the
-# line. Slice sampling, which does carve out a genuine interval along the axis,
-# should land close to it. Watch for that ordering in the table.
+# To show that the normalizing constant genuinely does not matter, target a
+# distribution written **without** one. This is a Gaussian mixture whose true
+# density we happen to know, so we can check the answer:
 
 # %%
-for rho in [0.0, 0.9, 0.99]:
-    pred = (1 - rho**2) / (1 + rho**2)
-    print(f"rho={rho:4.2f}   predicted lag-1 autocorr {rho**2:5.3f}   "
-          f"predicted ESS/N {pred:6.3f}")
+def log_target_mixture(theta):
+    """log of an UNNORMALISED two-component mixture. No 1/sqrt(2*pi) anywhere."""
+    x = theta[0]
+    return np.log(np.exp(-0.5 * ((x - 2.0) / 0.7) ** 2)
+                  + 0.6 * np.exp(-0.5 * ((x + 1.5) / 0.5) ** 2))
 
-# %% [markdown]
-# > **Poll.** At $\rho = 0.99$, which sampler do you expect to have the
-# > *highest* acceptance rate?
-# >
-# > **A.** NUTS — it is the most sophisticated.
-# > **B.** Metropolis — it will shrink its proposal until almost everything is accepted.
-# > **C.** Slice — it does not reject at all.
-# > **D.** They will be about the same.
-#
-# <details>
-# <summary>Answer</summary>
-#
-# **C**, and **B** is the trap worth dwelling on. Slice sampling always returns
-# a point, so "acceptance" is 100% by construction — and it is still slow here,
-# because the slice it can carve out along one axis is tiny. Metropolis will
-# happily tune itself to a high acceptance rate by taking microscopic steps.
-#
-# **High acceptance is not good news.** It is perfectly compatible with a chain
-# that has barely moved. This is why we measure ESS, not acceptance.
-#
-# </details>
 
-# %% [markdown]
-# ### A.3 Run all nine
+chain, acc = metropolis(log_target_mixture, start=[0.0], step_size=1.5,
+                        n_steps=40_000, seed=RANDOM_SEED)
+print(f"acceptance rate {acc:.2f}")
 
-# %%
-RHOS = [0.0, 0.9, 0.99]
-results = {}
-rows = []
-
-for rho in RHOS:
-    for name in SAMPLERS:
-        idata, post, wall = run(rho, name)
-        results[(rho, name)] = post
-        x = post["x"].values
-        ess = float(az.ess(idata, var_names=["x"]).x)
-        n_draws = x.size
-        acf = np.asarray(autocorr(post)).mean(axis=0)   # average over chains
-        rows.append({
-            "rho": rho, "sampler": name,
-            "ESS": ess, "ESS/N": ess / n_draws,
-            "lag-1": float(acf[1]),
-            "sec": wall, "ESS/sec": ess / wall,
-            "corr(x,y)": float(np.corrcoef(post["x"].values.ravel(),
-                                           post["y"].values.ravel())[0, 1]),
-        })
-
-table = pd.DataFrame(rows)
-print(table.to_string(index=False, float_format=lambda v: f"{v:8.3f}"))
-
-# %% [markdown]
-# Read the `corr(x,y)` column first: **every** sampler gets the correlation
-# roughly right. They are all "correct" in the sense of being asymptotically
-# valid. What differs by two orders of magnitude is how many independent draws
-# you bought per unit of work.
-
-# %%
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 3.8))
-
-for name, (_, colour) in SAMPLERS.items():
-    sub = table[table.sampler == name]
-    ax1.plot(sub["rho"], sub["ESS/N"], "o-", color=colour, label=name)
-    ax2.plot(sub["rho"], sub["ESS/sec"], "o-", color=colour, label=name)
-
-ax1.plot(RHOS, [(1 - r**2) / (1 + r**2) for r in RHOS], "--",
-         color=S.TRUTH, lw=1.5, label="exact Gibbs benchmark")
-ax1.set(title="Efficiency per draw", xlabel=r"correlation $\rho$",
-        ylabel="ESS / N", yscale="log")
-ax1.legend()
-ax2.set(title="Efficiency per second", xlabel=r"correlation $\rho$",
-        ylabel="ESS / sec", yscale="log")
-ax2.legend()
-fig.tight_layout()
-
-# %% [markdown]
-# The ordering is the one we predicted. **Slice** sits close to the exact-Gibbs
-# benchmark — it really does sample along each axis. **Metropolis falls below
-# it**, because a random walk inside the conditional is strictly worse than
-# drawing from it. **NUTS beats the benchmark outright**, and that is the whole
-# argument for gradient-based sampling: it is not a better axis-aligned method,
-# it is *not axis-aligned at all*, so the $\rho^2$ ceiling does not apply to it.
-
-# %% [markdown]
-# The full autocorrelation function makes the same point across all lags. This is
-# `az.plot_autocorr`, which is driven by the same `.azstats.autocorr` accessor we
-# tabulated above.
-
-# %%
-acf_compare = {name: np.asarray(autocorr(results[(0.99, name)])).mean(axis=0)[:60]
-               for name in SAMPLERS}
+grid = np.linspace(-4, 5, 400)
+dens = np.exp([log_target_mixture([g]) for g in grid])
+dens /= np.trapezoid(dens, grid)          # normalise only for PLOTTING
 
 fig, ax = plt.subplots(figsize=(7, 3.8))
-for name, (_, colour) in SAMPLERS.items():
-    ax.plot(acf_compare[name], color=colour, label=name)
-S.truth_line(ax, 0.0, label="zero")
-ax.set(title=r"Autocorrelation of $x$ at $\rho = 0.99$", xlabel="lag",
-       ylabel="autocorrelation")
+ax.hist(chain[2000:, 0], bins=90, density=True, color=S.PRIMARY, alpha=0.75,
+        label="Metropolis samples")
+ax.plot(grid, dens, color=S.TRUTH, ls="--", lw=2, label="true density")
+ax.set(title="Sampling a distribution we never normalised",
+       xlabel=r"$\theta$", ylabel="density")
 ax.legend()
 fig.tight_layout()
 
 # %% [markdown]
-# ### A.4 Look at what the chains actually do
+# Twelve lines of Python, no gradients, no library — and the histogram lands on
+# the density. Note that we **never computed the normalizing constant**; the
+# sampler only ever saw ratios.
 #
-# Numbers are convincing; pictures are memorable. Here are the first 300 draws
-# of one chain at $\rho = 0.99$, drawn over the true density.
-
-# %%
-rho = 0.99
-gx, gy = np.meshgrid(np.linspace(-3.2, 3.2, 220), np.linspace(-3.2, 3.2, 220))
-quad = (gx**2 - 2 * rho * gx * gy + gy**2) / (1 - rho**2)
-dens = np.exp(-0.5 * quad)
-
-fig, axes = plt.subplots(1, 3, figsize=(12.5, 4.1), sharex=True, sharey=True)
-for ax, (name, (_, colour)) in zip(axes, SAMPLERS.items()):
-    post = results[(rho, name)]
-    x = post["x"].values[0][:300]
-    y = post["y"].values[0][:300]
-    ax.contour(gx, gy, dens, levels=6, colors=S.MUTED, linewidths=0.7)
-    ax.plot(x, y, "-o", color=colour, lw=0.8, ms=2.5, alpha=0.8)
-    ess_n = table[(table.rho == rho) & (table.sampler == name)]["ESS/N"].iloc[0]
-    ax.set(title=f"{name}  (ESS/N = {ess_n:.3f})", xlabel="$x$")
-axes[0].set_ylabel("$y$")
-fig.suptitle("First 300 draws at $\\rho = 0.99$", y=1.02)
-fig.tight_layout()
-
-# %% [markdown]
-# Metropolis inches along the ridge in tiny steps. Slice does better but is
-# still constrained to move one axis at a time. NUTS traverses the whole ridge
-# in single transitions.
-#
-# ::: {.callout-note}
-# ## The lesson of Half A
-# The target was a *perfectly ordinary Gaussian*. No pathology, no heavy tails,
-# no multimodality. All it had was **correlation** — and that alone was enough
-# to cost a random-walk sampler 99% of its draws.
-#
-# Now: what if the correlation is not something you chose, but something your
-# experiment created?
-# :::
-
-# %% [markdown]
-# ## Half B — the same problem, wearing a lab coat
-#
-# ### B.1 Two datasets, one model
-#
-# In the previous session we generated two DDM datasets. Identical model,
-# identical `a`, `z`, `t`. Only the drift rate differs — and therefore the error
-# rate.
-
-# %%
-data_path = pathlib.Path("data/ddm_two_designs.csv")
-if not data_path.exists():
-    raise FileNotFoundError(
-        "Run simulating-cognitive-models.ipynb first — it writes this file."
-    )
-two = pd.read_csv(data_path)
-
-for design, sub in two.groupby("design", sort=False):
-    print(f"{design:9s} n={len(sub)}  error rate {(sub.response == -1).mean():5.1%}  "
-          f"mean RT {sub.rt.mean():.3f}s")
-
-# %% [markdown]
-# > **Poll.** One of these two datasets supports much better parameter
-# > recovery. Which, and why?
+# > **Poll.** Our proposal was symmetric: $\theta' = \theta + \text{Normal}(0, s^2)$.
+# > What breaks if the proposal is *asymmetric* and we keep this same rule?
 # >
-# > **A.** `extreme` — near-perfect accuracy means less noise.
-# > **B.** `balanced` — you need errors to identify the parameters.
-# > **C.** They are equivalent; both come from the same model.
-# > **D.** `extreme`, but only if you collect more trials.
+# > - **A.** Nothing — the chain still targets $\pi$.
+# > - **B.** The chain converges to the wrong distribution.
+# > - **C.** The chain still works but mixes more slowly.
+# > - **D.** The acceptance rate goes to zero.
 #
 # <details>
-# <summary>Answer — hold the vote until after B.3</summary>
+# <summary>Answer</summary>
 #
-# **B.** Error responses are what let you tell drift rate apart from boundary
-# separation. A low error rate constrains only the *ratio* of the two, so many
-# different `(v, a)` pairs predict nearly identical data.
-#
-# **D** is the seductive wrong answer: more trials does **not** rescue a
-# zero-error design. Lüken et al. (2025) show recovery still fails at 1200
-# trials when the error rate is near zero.
+# **B.** With an asymmetric proposal you must include the proposal ratio too —
+# the Metropolis–**Hastings** correction,
+# $\alpha = \min(1,\ [\tilde{\pi}(\theta')q(\theta \mid \theta')] /
+# [\tilde{\pi}(\theta)q(\theta' \mid \theta)])$. Omit it and the chain converges
+# happily to something that is not your target, with no warning. Our symmetric
+# Gaussian proposal makes $q$ cancel, which is why we could leave it out.
 #
 # </details>
 
 # %% [markdown]
-# ### B.2 A DDM likelihood, by hand
+# ### The knob that decides everything
 #
-# We build the model in raw PyMC using the analytic DDM log-likelihood. Tomorrow
-# HSSM will do all of this for you in one line — today it is worth seeing that
-# there is no magic underneath.
+# `step_size` is the whole art of a random-walk sampler. Too small and every
+# proposal is accepted but the chain barely moves; too large and almost
+# everything is rejected so the chain barely moves. Both failures look like
+# "high" or "reasonable" acceptance rates.
+
+# %%
+rows = []
+for s in [0.05, 0.5, 1.5, 5.0, 20.0]:
+    ch, a = metropolis(log_target_mixture, start=[0.0], step_size=s,
+                       n_steps=20_000, seed=RANDOM_SEED)
+    x = ch[2000:, 0]
+    ess = float(az.ess(az.from_dict({"x": x[None, :]}), var_names=["x"]).x)
+    rows.append({"step_size": s, "acceptance": a, "ESS": ess,
+                 "ESS/draw": ess / x.size})
+print(pd.DataFrame(rows).to_string(index=False, float_format=lambda v: f"{v:9.3f}"))
+
+# %% [markdown]
+# ::: {.callout-important}
+# ## Acceptance rate is not a measure of quality
+# The smallest step size has by far the **highest** acceptance rate and among
+# the **worst** ESS — it accepts everything because it proposes almost nothing.
+# Judge a sampler by effective sample size, never by how often it says yes.
+# :::
+#
+# This is also why gradient-based samplers exist. NUTS does not guess a
+# direction and hope; it uses $\nabla \log \tilde{\pi}$ to move along the
+# distribution. We rely on that tomorrow — today it is enough to know what it
+# is replacing.
+
+# %% [markdown]
+# ## 3. When the problem is the *posterior*, not the sampler
+#
+# Now the cognitive model. At 14:30 everything recovered cleanly. Here are two
+# datasets from the **same** DDM, differing only in drift rate — and therefore
+# in how often the participant makes an error.
 
 # %%
 from hssm.likelihoods import DDM
+from ssms import Simulator
+
+DRAWS, TUNE, CHAINS = 700, 700, 2
+TRUE = {"v_balanced": 0.5, "v_extreme": 3.0, "a": 1.2, "z": 0.5, "t": 0.3}
+PARAMS = ["v", "a", "z", "t"]
 
 
-def fit_ddm(df, draws=DRAWS, tune=TUNE, chains=CHAINS, step_factory=None,
-            seed=RANDOM_SEED):
-    """Fit the 4-parameter DDM. Responses must be coded -1/+1.
+def make(v_true, n=600):
+    o = Simulator(model="ddm").simulate(theta=[v_true, TRUE["a"], TRUE["z"], TRUE["t"]],
+                                        n_samples=n, random_state=RANDOM_SEED)
+    return np.column_stack([o["rts"].flatten(), o["choices"].flatten()])
 
-    `step_factory` is a zero-argument callable, not a step instance: PyMC step
-    methods must be constructed *inside* a model context, so building one at the
-    top of a loop raises `TypeError: No model on context stack.`
-    """
-    observed = np.column_stack([df["rt"].to_numpy(), df["response"].to_numpy()])
+
+def fit_ddm(observed, seed=RANDOM_SEED):
     with pm.Model():
         v = pm.Normal("v", 0.0, 3.0)
         a = pm.HalfNormal("a", 2.0)
         z = pm.Beta("z", 5.0, 5.0)
         t = pm.HalfNormal("t", 0.5)
         DDM("obs", v=v, a=a, z=z, t=t, observed=observed)
-        kw = dict(draws=draws, tune=tune, chains=chains, cores=1,
-                  progressbar=False, random_seed=seed)
-        t0 = time.time()
-        idata = pm.sample(step=step_factory(), **kw) if step_factory is not None \
-            else pm.sample(nuts_sampler="pymc", **kw)
-        wall = time.time() - t0
-    return idata, wall
+        return pm.sample(draws=DRAWS, tune=TUNE, chains=CHAINS, cores=1,
+                         nuts_sampler="pymc", progressbar=False, random_seed=seed)
 
 
-TRUE = {"v_balanced": 0.5, "v_extreme": 3.0, "a": 1.2, "z": 0.5, "t": 0.3}
-
-fits = {}
-for design in ["balanced", "extreme"]:
-    sub = two[two.design == design]
-    idata, wall = fit_ddm(sub)
-    fits[design] = idata
-    post = idata.posterior.dataset
-    vv, aa = post["v"].values.ravel(), post["a"].values.ravel()
-    print(f"{design:9s} {wall:5.1f}s  "
-          f"v {vv.mean():5.2f} +/- {vv.std():.2f} (true {TRUE['v_' + design]})   "
-          f"a {aa.mean():5.2f} +/- {aa.std():.2f} (true 1.2)   "
-          f"corr(v,a) = {np.corrcoef(vv, aa)[0, 1]:+.3f}")
+fits, posteriors = {}, {}
+for label, v_true in [("balanced", TRUE["v_balanced"]), ("extreme", TRUE["v_extreme"])]:
+    obs = make(v_true)
+    err = (obs[:, 1] == -1).mean()
+    idata = fit_ddm(obs)
+    fits[label] = idata
+    p = idata.posterior.dataset
+    posteriors[label] = {k: p[k].values.ravel() for k in PARAMS}
+    print(f"{label:9s} error rate {err:5.1%}   "
+          + "  ".join(f"{k}={posteriors[label][k].mean():5.2f}" for k in PARAMS))
+print(f"\ntruth: v=0.5 or 3.0, a={TRUE['a']}, z={TRUE['z']}, t={TRUE['t']}")
 
 # %% [markdown]
-# ### B.3 What actually broke
-#
-# `v` is recovered in both designs. `a` is not. Look at how much the posterior
-# for `a` widens, and — more tellingly — *where it goes*.
+# ### The correlation structure is the diagnosis
 
 # %%
-prior_a_mean = 2.0 * np.sqrt(2.0 / np.pi)      # mean of HalfNormal(sigma=2)
-
-summary = []
-for design in ["balanced", "extreme"]:
-    post = fits[design].posterior.dataset
-    vv, aa = post["v"].values.ravel(), post["a"].values.ravel()
-    summary.append({
-        "design": design,
-        "error rate": (two[two.design == design].response == -1).mean(),
-        "sd(v)": vv.std(), "sd(a)": aa.std(),
-        "a_hat": aa.mean(), "corr(v,a)": np.corrcoef(vv, aa)[0, 1],
-    })
-summary = pd.DataFrame(summary)
-print(summary.to_string(index=False, float_format=lambda x: f"{x:8.3f}"))
-print(f"\ntrue a = {TRUE['a']}      prior mean of a = {prior_a_mean:.3f}")
+fig, axes = plt.subplots(1, 2, figsize=(10, 4.2))
+for ax, label in zip(axes, ["balanced", "extreme"]):
+    d = posteriors[label]
+    M = np.array([[np.corrcoef(d[i], d[j])[0, 1] for j in PARAMS] for i in PARAMS])
+    im = ax.imshow(M, vmin=-1, vmax=1, cmap="RdBu_r")
+    ax.set(xticks=range(4), yticks=range(4), title=label)
+    ax.set_xticklabels(PARAMS); ax.set_yticklabels(PARAMS)
+    for i in range(4):
+        for j in range(4):
+            ax.text(j, i, f"{M[i, j]:+.2f}", ha="center", va="center", fontsize=9,
+                    color="white" if abs(M[i, j]) > 0.55 else S.TRUTH)
+fig.colorbar(im, ax=axes, shrink=0.8, label="posterior correlation")
+fig.suptitle("Every parameter pair, both designs", y=1.02)
 
 # %% [markdown]
-# Read the last two columns together. In the extreme design the posterior for
-# `a` is roughly an order of magnitude wider **and** its centre has migrated
-# away from the true 1.2 toward the mean of its own prior.
+# In the balanced design the correlations are moderate and *structured*: `a`
+# with `t` (both push the RT distribution rightward) and `v` with `z` (both
+# push toward one boundary).
 #
-# That is the signature of a parameter the data has stopped speaking about: the
-# posterior falls back to the prior. Plot it directly.
-
-# %%
-a_grid = np.linspace(0.0, 3.5, 400)
-prior_pdf = np.sqrt(2 / np.pi) / 2.0 * np.exp(-(a_grid**2) / (2 * 2.0**2))
-
-fig, axes = plt.subplots(1, 2, figsize=(11, 3.9), sharex=True, sharey=True)
-for ax, design in zip(axes, ["balanced", "extreme"]):
-    aa = fits[design].posterior.dataset["a"].values.ravel()
-    ax.plot(a_grid, prior_pdf, "-", color=S.MUTED, lw=2, label="prior  HalfNormal(2)")
-    ax.hist(aa, bins=60, density=True, color=S.PRIMARY, alpha=0.75, label="posterior")
-    S.truth_line(ax, TRUE["a"], axis="x", label="true $a$ = 1.2")
-    err = (two[two.design == design].response == -1).mean()
-    ax.set(title=f"{design} — {err:.1%} errors", xlabel="boundary $a$", xlim=(0, 3.5))
-    ax.legend(loc="upper right", fontsize=9)
-axes[0].set_ylabel("density")
-fig.tight_layout()
-
-# %% [markdown]
-# On the left the posterior is a narrow spike, far tighter than the prior and
-# sitting on the truth — the data determined `a`. On the right it has spread out
-# toward the prior and drifted off the true value. **The experiment stopped
-# measuring `a`.**
+# In the extreme design **everything correlates with everything**, and the
+# dominant pair is not the one people usually name:
 #
-# ### And the joint
+# $$
+# \operatorname{corr}(v, t) \approx -0.99 .
+# $$
 #
-# There is a positive `v`–`a` tilt, and it is worth looking at, but be careful
-# about how strong you claim it is.
+# The mechanism is simple once stated. With essentially no errors, the choices
+# carry no information at all — every trial went the same way — so the *only*
+# signal left is the response-time distribution. And
+#
+# $$
+# \text{RT} \;=\; \underbrace{t}_{\text{non-decision}}
+# \;+\; \underbrace{\text{decision time}}_{\approx\, a / v \text{ for large } v} .
+# $$
+#
+# Raise $t$ and lower $v$ together and total RT is unchanged. That is a
+# near-perfect one-dimensional ridge: the data cannot tell the two apart.
 
 # %%
 fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
-for ax, design in zip(axes, ["balanced", "extreme"]):
-    post = fits[design].posterior.dataset
-    vv, aa = post["v"].values.ravel(), post["a"].values.ravel()
-    r = np.corrcoef(vv, aa)[0, 1]
-    ax.plot(vv, aa, "o", color=S.PRIMARY, ms=2.5, alpha=0.25, ls="none",
+for ax, label in zip(axes, ["balanced", "extreme"]):
+    d = posteriors[label]
+    r = np.corrcoef(d["v"], d["t"])[0, 1]
+    ax.plot(d["v"], d["t"], "o", color=S.PRIMARY, ms=2.5, alpha=0.25, ls="none",
             label="posterior draws")
-    S.truth_point(ax, TRUE[f"v_{design}"], TRUE["a"])
-    ax.set(title=f"{design}:  corr(v,a) = {r:+.2f}",
-           xlabel="drift $v$", ylabel="boundary $a$")
-    ax.legend(loc="upper left", fontsize=9)
+    S.truth_point(ax, TRUE[f"v_{label}"], TRUE["t"])
+    ax.set(title=f"{label}:  corr(v, t) = {r:+.2f}",
+           xlabel="drift $v$", ylabel="non-decision time $t$")
+    ax.legend(loc="upper right", fontsize=9)
 fig.tight_layout()
 
 # %% [markdown]
-# ::: {.callout-note}
-# ## An honest note about how big this trade-off is
-# Lüken et al. (2025) report within-posterior `a`–`v` correlations approaching
-# **1** at near-zero error rates. In the plain 4-parameter DDM fitted here the
-# correlation stays moderate — the collapse shows up as **width and prior
-# reversion**, not as a near-degenerate ridge.
+# On the left, a compact blob on the truth. On the right, a long thin ridge —
+# and the truth is on it, but so is every other point along the line.
 #
-# The reason is worth knowing. Choice proportion identifies the product $v\cdot a$;
-# with no errors that constraint is gone. But the **shape** of the RT
-# distribution also carries information about $v \cdot a$, and in the plain DDM
-# that shape is clean enough to partly stand in. Add across-trial variability —
-# the parameters people include to make the model realistic — and that second
-# source of information gets absorbed too, at which point the correlation really
-# does head for 1.
-#
-# The moral is the same either way, and it generalises: **the parameters you add
-# for realism are the ones that consume your identifiability.**
-# :::
-#
-# ::: {.callout-important}
-# ## Always look at more than the point estimate
-# Nothing above is visible in a posterior mean. `v` looked fine in both designs.
-# You need the **width**, the **prior** to compare it against, and the **joint**.
-# :::
-
-# %% [markdown]
-# ### B.4 What the ridge does to a sampler
-#
-# Half A told us what to expect from a strongly correlated posterior. Let us
-# check that the prediction transfers.
+# The consequences are severe and easy to miss:
 
 # %%
-comp = []
-for design in ["balanced", "extreme"]:
-    sub = two[two.design == design]
-    for name, factory in [("NUTS", None), ("Metropolis", lambda: pm.Metropolis())]:
-        idata, wall = fit_ddm(sub, draws=DRAWS_CMP, tune=TUNE_CMP,
-                              chains=2, step_factory=factory)
-        ess = float(az.ess(idata, var_names=["v"]).v)
-        n = idata.posterior.dataset["v"].values.size
-        comp.append({"design": design, "sampler": name, "ESS(v)": ess,
-                     "ESS/N": ess / n, "sec": wall, "ESS/sec": ess / wall})
-
-comp = pd.DataFrame(comp)
-print(comp.to_string(index=False, float_format=lambda v: f"{v:8.3f}"))
+tab = []
+for label in ["balanced", "extreme"]:
+    d = posteriors[label]
+    tab.append({"design": label,
+                **{f"sd({k})": d[k].std() for k in PARAMS},
+                "v_hat": d["v"].mean(),
+                "corr(v,t)": np.corrcoef(d["v"], d["t"])[0, 1]})
+print(pd.DataFrame(tab).to_string(index=False, float_format=lambda v: f"{v:8.3f}"))
+print(f"\ntrue v in the extreme design: {TRUE['v_extreme']}")
 
 # %% [markdown]
+# ::: {.callout-important}
+# ## High accuracy is bad data for parameter estimation
+# This is the counterintuitive headline. The near-perfect dataset gives a drift
+# posterior an order of magnitude wider, biased well away from the truth, and
+# lying along a ridge with non-decision time. Nothing is wrong with the sampler
+# and nothing is wrong with the model — **the experiment did not collect the
+# information**.
+#
+# Lüken, Heathcote, Haaf & Matzke (2025, *Psychonomic Bulletin & Review*
+# 32(3):1411–1424) study this systematically and recommend designing for error
+# rates between **15% and 35%**. Below that, parameters stop being separately
+# identifiable — and collecting more trials does not rescue a design with no
+# errors in it.
+# :::
+#
 # ### Exercise
 #
-# We have watched `a` fall apart. **Predict, before you compute:** rank `a`, `z`
-# and `t` by how much each one's posterior widens between the balanced and the
-# extreme design.
+# We measured `corr(v, t)`. Which pair is strongest in the **balanced** design,
+# and does the mechanism make sense to you?
 #
-# Then measure it — compare `sd` for each parameter across the two fits.
-
-# %%
-widths = []
-for design in ["balanced", "extreme"]:
-    post = fits[design].posterior.dataset
-    widths.append({"design": design,
-                   **{f"sd({k})": post[k].values.std() for k in ["a", "z", "t"]}})
-widths = pd.DataFrame(widths)
-print(widths.to_string(index=False, float_format=lambda x: f"{x:7.4f}"))
-print("\nwidening factor, extreme / balanced:")
-for k in ["a", "z", "t"]:
-    lo, hi = widths[f"sd({k})"]
-    print(f"   {k}: {hi / lo:5.1f}x")
-
-# %% [markdown]
 # <details>
-# <summary>What this shows, and why it is not the tidy story</summary>
+# <summary>Answer</summary>
 #
-# The damage is **graded**, not all-or-nothing:
+# `a`–`t`, at about **-0.65**, with `v`–`z` close behind at about **-0.61**.
 #
-# | parameter | widening | posterior mean (true) |
-# |---|---|---|
-# | `a` | ~22x | 1.19 → 1.66 (1.2) |
-# | `z` | ~6x | 0.52 → 0.63 (0.5) |
-# | `t` | **~1x** | 0.31 → 0.30 (0.3) |
+# Both are interpretable. Boundary separation and non-decision time both make
+# responses slower, so raising one and lowering the other keeps mean RT roughly
+# fixed — they compete to explain the same feature of the data. Drift and start
+# point both push the process toward the upper boundary, so they compete to
+# explain the choice proportion.
 #
-# **`t` is completely untouched** — the same posterior width in both designs.
-# This is the result people most often get backwards: non-decision time *feels*
-# like the flimsiest parameter and is in fact the most robust here, because it
-# is pinned by the **leading edge** of the RT distribution, and extreme accuracy
-# does not erase the leading edge.
-#
-# **`z` is not robust**, though it degrades far less than `a`. With almost every
-# response on one boundary, there is little left to identify a start-point bias
-# from, so `z` drifts toward the upper boundary. Lüken et al. group `z` with
-# `t0` as well recovered; at least in this 4-parameter setup, `z` sits clearly
-# between the two extremes rather than with `t`.
-#
-# Worth checking yourself: `corr(a, t)` is about **-0.60** in the balanced
-# design and only **-0.09** in the extreme one. The `a`–`t` trade-off gets
-# *weaker*, not stronger — because in the extreme design `a` is barely
-# constrained by anything, so it has stopped trading off against `t` in
-# particular.
+# Notice that `v`–`a`, the pair people most often name, is only about **+0.20**
+# here — and even in the extreme design it is +0.74, well behind `v`–`t`. It is
+# worth checking which parameters actually trade off in *your* fit rather than
+# assuming.
 #
 # </details>
 
 # %% [markdown]
-# ## Synthesis
+# ## What to take away
 #
-# Half A and Half B are the same phenomenon:
+# ::: {.callout-tip}
+# ## The four things that matter
 #
-# | | where the difficulty came from | what breaks | what you would have missed |
-# |---|---|---|---|
-# | **A** | we chose $\rho$ | sampler efficiency | acceptance rate looked *great* |
-# | **B** | the experiment produced ~0% errors | identifiability of `a` | the posterior mean of `v` looked fine |
-#
-# In both cases the posterior is *badly conditioned*: there is a direction in
-# parameter space along which the data says almost nothing. A random-walk
-# sampler crawls along it; a gradient sampler traverses it but **cannot invent
-# information that is not there**. No sampler, however good, rescues Half B —
-# that damage was done when the experiment was designed.
-#
-# **The design lesson**, from Lüken et al. (2025), *Psychonomic Bulletin &
-# Review* 32(3):1411–1424: aim for error rates between **15% and 35%**. Below
-# 15% at small trial counts, `v` and `a` stop being separately identifiable —
-# and collecting more trials does not fix it. Manipulating response caution
-# (speed vs accuracy instructions) buys more identifiability than manipulating
-# difficulty.
-#
-# The counterintuitive headline worth repeating: **high accuracy is bad data for
-# parameter estimation.**
-#
-# ::: {.callout-note}
-# ## Tomorrow
-# Both of today's difficulties came from correlation that is roughly the *same
-# everywhere* in parameter space. Hierarchical models introduce a nastier
-# relative: curvature that **changes as you move**, so no single step size works
-# anywhere. That is the funnel, and it is Day 3 at 11:00.
+# 1. **MCMC turns integrals into averages.** You cannot integrate $\pi$, so you
+#    sample from it and average.
+# 2. **The normalizing constant cancels.** Every accept/reject decision is a
+#    *ratio*, so the evidence $p(y)$ never has to be computed to sample a
+#    posterior.
+# 3. **Acceptance rate is not quality.** A tiny step size accepts nearly
+#    everything and explores nearly nothing. Judge by ESS.
+# 4. **Some posteriors are hard because of the data, not the sampler.** A
+#    near-degenerate ridge is the experiment's fault, and no sampler fixes it.
 # :::
+#
+# ### Quick reference
+#
+# | want to | do |
+# |---|---|
+# | see the trade-off structure | correlation matrix of posterior draws |
+# | see a specific trade-off | scatter the two parameters, mark the truth |
+# | judge a sampler | `az.ess`, never the acceptance rate |
+# | design a study you can fit | aim for **15-35% errors** |
+#
+# **Next, tomorrow at 11:00:** today's difficulties came from correlation that
+# is roughly the same everywhere in parameter space. Hierarchical models bring a
+# nastier relative — curvature that *changes as you move* — where the failure
+# stops being inefficiency and becomes bias.

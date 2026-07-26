@@ -1,10 +1,11 @@
 # Day 2: The Bayesian toolkit — PyMC, simulation, and MCMC
 
 - **Instructor:** Alexander Fengler
-- **When:** Day 2, Tuesday July 28 — three sessions:
+- **When:** Day 2, Tuesday July 28 — four sessions:
   - 12:00 — "A tutorial on PyMC" (60 min)
   - 14:00 — "Hands-on: simulating data from a cognitive model" (30 min)
-  - 14:30 — "Toy models for parameter estimation" + 15:00 "MCMC methods" (60 min, continuous)
+  - 14:30 — "Hands-on: toy models for parameter estimation" (30 min)
+  - 15:00 — "MCMC methods" (30 min)
 - **Stack:** Python 3.12 · the shared `tutorials/` uv environment (PyMC, ArviZ,
   bambi, ssm-simulators)
 
@@ -31,13 +32,13 @@ No GPU needed. No data is downloaded — everything is simulated in-notebook.
 
 | notebook | run "all cells" |
 |---|---|
-| `pymc-intro.ipynb` | ~6 s |
-| `simulating-cognitive-models.ipynb` | ~4 s |
-| `mcmc-and-identifiability.ipynb` | **~2.5 min** |
+| `pymc-intro.ipynb` | ~15 s |
+| `simulating-cognitive-models.ipynb` | ~10 s |
+| `toy-models.ipynb` | **a few minutes** — fits three DDMs and their posterior predictives |
+| `mcmc-and-identifiability.ipynb` | **a few minutes** — fits two DDMs, one on a hard posterior |
 
-Only the third is slow, and deliberately so: it fits the DDM several times and
-runs three samplers across three correlation levels. If you are following along
-live, run cells as you go rather than "Run All" at the start.
+The last two are slow deliberately: they fit the DDM repeatedly. If you are
+following along live, run cells as you go rather than "Run All" at the start.
 
 ## Files
 
@@ -46,9 +47,13 @@ live, run cells as you go rather than "Run All" at the start.
   regression by hand, then the same regression in bambi.
 - `simulating-cognitive-models.ipynb` — session 2. `ssm-simulators`: call
   logic, the model zoo by introspection, and building your own model.
-- `mcmc-and-identifiability.ipynb` — sessions 3+4, run continuously. Sampler
-  behaviour on correlated posteriors, then a DDM that forks into a
-  well-designed case and a badly-designed one.
+- `toy-models.ipynb` — session 3. The bridge from PyMC to cognitive models:
+  the DDM likelihood used directly as a PyMC distribution, a design with
+  three coherence levels crossed with a speed/accuracy instruction, and a
+  model-comparison arc ending in the true generating model.
+- `mcmc-and-identifiability.ipynb` — session 4. What MCMC is actually doing,
+  a hand-written Metropolis sampler, and what makes a posterior hard — using
+  a DDM whose parameters stop being separately identifiable.
 - `../sbi4cogsci_style.py` — shared plot style. Colours are semantic: one
   meaning per colour across all five Fengler sessions.
 

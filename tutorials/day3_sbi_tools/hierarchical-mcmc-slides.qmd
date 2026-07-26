@@ -31,20 +31,169 @@ format:
 Partial pooling is the one we want. It is also the one that changes the
 *geometry* of the posterior.
 
-## What it costs in parameters
+## Where the three differ, in Bayes' rule
 
-A 4-parameter DDM, 20 participants:
+For one participant there is nothing to argue about:
 
-| Model | Free parameters |
-|---|---|
-| Complete pooling | 4 |
-| No pooling | 80 |
-| Partial pooling | 80 + 8 population-level = **88** |
+$$p(\theta \mid y) \;=\; \frac{p(y \mid \theta)\, p(\theta)}{p(y)}$$
 
 . . .
 
-Partial pooling has *more* parameters than no pooling — and yet it is better
-behaved statistically. The hyperparameters are what buy that.
+With $G$ participants, **the whole argument is about $p(\theta)$**:
+
+$$
+p(\theta_{1:G},\, \phi \mid y) \;\propto\;
+\underbrace{\prod_{g} p(y_g \mid \theta_g)}_{\text{likelihood}}\;
+\underbrace{\prod_{g} p(\theta_g \mid \phi)}_{\text{population}}\;
+\underbrace{p(\phi)}_{\text{hyperprior}}
+$$
+
+## The same equation, three ways
+
+| | population term $p(\theta_g \mid \phi)$ |
+|---|---|
+| complete pooling | a point mass — every $\theta_g$ is the same $\theta$ |
+| no pooling | a fixed, wide prior, **identical and independent** for each $g$ |
+| partial pooling | a distribution whose $\phi$ is **estimated from the data** |
+
+. . .
+
+::: {.callout-note}
+## Hierarchy is not a new inference rule
+It is the ordinary posterior with one extra layer in the prior. What changes is
+that participants stop being independent: each one's estimate now depends on
+what the others said, through $\phi$.
+:::
+
+## Does it actually help? Let us check
+
+A DDM panel built to be **unbalanced**, the way real data is:
+
+- 20 participants, each with their own drift $v_g$ drawn from a population
+- trial counts from **5 to 600** — some participants barely showed up
+- everything else held fixed, so the comparison is about pooling alone
+
+. . .
+
+Fit it twice — **no pooling** and **partial pooling** — and compare each
+estimate against the drift we know we used.
+
+## Pooling moves whoever cannot speak for themselves
+
+![](figures/shrinkage.png)
+
+Each arrow is one participant, from their no-pooling to their partial-pooling
+estimate. Long arrows on the left. Almost none on the right.
+
+## The gain is exactly where the data is thin
+
+::: {.columns}
+::: {.column width="55%"}
+![](figures/pooling_error.png)
+:::
+::: {.column width="45%"}
+| mean abs. error | no pooling | partial |
+|---|---|---|
+| **fewer than 30 trials** | 0.265 | **0.175** |
+| 30 trials or more | 0.051 | 0.052 |
+:::
+:::
+
+. . .
+
+**34% better where data is scarce, and no worse where it is plentiful.** That is
+the trade you are being offered — and there is essentially no downside side of
+it.
+
+## Why that happens
+
+With 5 trials, a no-pooling fit has almost nothing to go on, so its estimate
+falls back on **whatever prior you happened to write down**.
+
+. . .
+
+Partial pooling also falls back on a prior — but on the **population**, which
+was estimated from the participants who *did* have data.
+
+::: {.callout-note}
+## The one-sentence version
+Pooling replaces an arbitrary prior with an *earned* one.
+:::
+
+## Wait — did we not just add parameters?
+
+The panel you just saw, counted naively:
+
+| Model | Free parameters |
+|---|---|
+| Complete pooling | 1 |
+| No pooling | 20 |
+| Partial pooling | 20 + $\mu$ + $\tau$ = **22** |
+
+. . .
+
+Partial pooling has **more** parameters *and* generalised better. Either
+Occam is wrong, or we are counting the wrong thing.
+
+## Count what the parameters cost, not how many there are
+
+`p_loo` — the **effective** number of parameters — measured on those exact two
+fits:
+
+| | nominal | effective (`p_loo`) |
+|---|---|---|
+| no pooling | 20 | **19.2** |
+| partial pooling | **22** | **15.1** |
+
+. . .
+
+Two more nominal parameters. **Four fewer effective ones.**
+
+::: {.callout-important}
+## Why
+A parameter costs a full unit only if the data is free to put it *anywhere*.
+Under pooling, each $v_g$ is pulled toward $\mu$ — so it is no longer free, and
+it costs a **fraction** of a parameter.
+:::
+
+## The two extra parameters are not two extra freedoms
+
+They are two **knobs that remove freedom** from the other twenty.
+
+. . .
+
+$\tau$ is a regularisation strength — and it is **learned from the data**
+rather than guessed by you. That is the trade the hierarchy makes:
+
+$$\text{2 hyperparameters} \;\longrightarrow\; \text{20 parameters that each cost less than 1}$$
+
+. . .
+
+::: {.callout-note}
+## Not just our example
+McElreath's tadpole model: **50** nominal parameters, **20.9** effective —
+against **48** nominal and **26.2** effective for no pooling. Two more
+nominal, five fewer effective, and a substantially better predictive score.
+:::
+
+## An honest footnote on `p_loo`
+
+::: {.callout-warning}
+## The gap depends on how sparse your groups are
+Our panel has participants with **5 trials** — those get shrunk hard, which is
+where the 19.2 → 15.1 comes from.
+
+Run the same comparison where *every* participant has 600 trials and the gap
+nearly vanishes: each participant's own data identifies their drift, shrinkage
+has nothing to pull against, and `p_loo` sits close to the nominal count.
+:::
+
+. . .
+
+Also note `elpd_loo` was **a tie** (−3984 vs −3983). Trial-level LOO is
+dominated by the participants who had plenty of data. Fewer effective
+parameters, same trial-level prediction — the benefit showed up in the
+*estimates*, which is what the previous slides measured.
 
 ## But the sampler now sees this
 
@@ -97,7 +246,7 @@ and $\hat{R}$ cannot see it, because every chain fails the same way.
 ::: {.column width="50%"}
 **Centered**
 
-$$\theta_g \sim \mathcal{N}(\mu, \tau)$$
+$$\theta_g \sim \text{Normal}(\mu, \tau)$$
 
 Sample $\theta_g$ directly. Its scale depends on $\tau$ — that coupling *is*
 the funnel.
@@ -105,10 +254,10 @@ the funnel.
 ::: {.column width="50%"}
 **Non-centered**
 
-$$z_g \sim \mathcal{N}(0, 1)$$
+$$z_g \sim \text{Normal}(0, 1)$$
 $$\theta_g = \mu + \tau \cdot z_g$$
 
-Sample $z_g$, which knows nothing about $\tau$. The geometry is a ball.
+Sample $z_g$, whose *prior* knows nothing about $\tau$.
 :::
 :::
 
@@ -116,6 +265,22 @@ Sample $z_g$, which knows nothing about $\tau$. The geometry is a ball.
 
 Same distribution. Different **coordinates**. The sampler only ever sees the
 coordinates.
+
+## Careful: the coupling did not vanish
+
+A priori, $z_g$ is an isotropic unit Gaussian — genuinely a ball. But the
+coupling to $\tau$ has not been removed, only **moved**:
+
+$$\theta_g = \mu + \tau \cdot z_g \quad \leftarrow \text{ the likelihood still sees this}$$
+
+. . .
+
+::: {.callout-important}
+## The sentence to remember
+**Centering puts the funnel in the prior. Non-centering moves it into the
+likelihood.** Whichever of the two is *weaker* for a given group should be the
+one carrying it.
+:::
 
 ## But not always
 
@@ -131,9 +296,71 @@ Which parameterization wins depends on whether the **prior** or the
 . . .
 
 With plenty of data per group, the non-centered form develops its *own*
-funnel — $z_g$ and $\tau$ become coupled through the likelihood instead.
+funnel — an **inverted** one: to hold $\theta_g$ fixed while $\tau$ grows, $z_g$
+must shrink.
 
 *(Papaspiliopoulos, Roberts & Sköld 2007; Betancourt & Girolami 2013)*
+
+## The pathology swaps corners
+
+![](figures/geometry.png)
+
+## Same picture, as one number
+
+Divergences, from the four fits above:
+
+| | centered | non-centered |
+|---|---|---|
+| **1 obs / group** | **350** | 12 |
+| **300 obs / group** | **0** | 16 |
+
+. . .
+
+Read along each row. Centered goes from catastrophic to perfect as the data
+strengthens. Non-centered goes the **other way** — slightly worse with more
+data, not better.
+
+::: {.callout-note}
+## Why non-centered is still the usual default
+Partial pooling itself suppresses the inverted funnel — the more groups
+informing $\tau$, the more it is cut off. Betancourt's phrasing: *"the
+pathological behavior is the worst exactly when the partial pooling is
+strongest."* So the reversal is real, but it usually costs efficiency rather
+than correctness.
+:::
+
+## The case we are not going to solve today
+
+What if the groups **disagree** about which parameterization they want?
+
+Betancourt's example: 9 groups with
+$N = (10, 5, \mathbf{1000}, 10, 1, 5, \mathbf{100}, 10, 5)$.
+
+::: {.incremental}
+- Center everything → the *sparse* groups funnel.
+- Non-center everything → the two *rich* groups inverted-funnel.
+- **Neither monolithic choice is right.** The optimal parameterization is
+  per-group.
+:::
+
+## …and why it is genuinely nasty
+
+. . .
+
+Both monolithic fits above produced only a **handful** of divergences —
+0.015% and 0.005%. Small enough that you would wave them away.
+
+::: {.callout-important}
+## The aggregate divergence count hides this
+You only see it by plotting $\theta_g$ (or $z_g$) against $\log\tau$
+**per group**. The total count looks fine while two groups are broken.
+:::
+
+. . .
+
+**There is a fix** — split the groups by a size threshold and parameterize each
+half its own way. We are not building it today; it needs per-group surgery on
+the model. Come and ask if you have data like this, because you probably do.
 
 ## Which is why you want it per parameter
 
@@ -154,6 +381,23 @@ hssm.HSSM(..., noncentered={"v": False, "a": True})
 2. Reparameterize, and watch it stop failing.
 3. Find the crossover where non-centering stops helping.
 4. Do it per-parameter, on a real SSM.
+
+. . .
+
+Then the payoff, on the model you would actually fit:
+
+::: {.callout-note}
+## The capstone
+Drift rate that varies with a **continuous difficulty** covariate, estimated
+**per participant**, from a panel where trial counts run from a handful to
+several hundred:
+
+$$v_{gi} \;=\; \beta^{(g)}_0 \;+\; \beta^{(g)}_1 \cdot \text{difficulty}_i,
+  \qquad \beta^{(g)} \sim \text{Normal}(\mu_\beta, \tau_\beta)$$
+
+Every participant gets their own slope. The participants with 5 trials get one
+anyway — borrowed, honestly, from everyone else.
+:::
 
 . . .
 

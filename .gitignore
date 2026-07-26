@@ -236,3 +236,7 @@ __marimo__/
 tutorials/**/data/
 # debris from local single-file `quarto render` runs
 tutorials/**/*_files/
+
+# Quarto leaks site_libs/ to the project root when a single file is rendered
+# with an output-dir outside the project. Build output, never committed.
+site_libs/
