@@ -1,0 +1,85 @@
+---
+title: "DDM explorer"
+subtitle: "Companion to *Simulating data from a cognitive model* (Day 2, 14:00)"
+---
+
+Two sliders, 136 precomputed simulations of 4,000 trials each. Watch what happens
+to the two response-time distributions as you move drift rate and boundary
+separation. The area under each curve is that boundary's share of the trials, so
+the split you see **is** the accuracy.
+
+```{ojs}
+//| echo: false
+grid = FileAttachment("ddm_grid.json").json()
+```
+
+```{ojs}
+//| echo: false
+viewof vSel = Inputs.range([-2, 2], {value: 0.75, step: 0.25, label: "drift v"})
+```
+
+```{ojs}
+//| echo: false
+viewof aSel = Inputs.range([0.6, 2.0], {value: 1.2, step: 0.2, label: "boundary a"})
+```
+
+```{ojs}
+//| echo: false
+cell = {
+  const near = (arr, x) => arr.reduce((p, c) => Math.abs(c - x) < Math.abs(p - x) ? c : p);
+  return grid.cells.find(d => d.v === near(grid.v_grid, vSel) &&
+                              d.a === near(grid.a_grid, aSel));
+}
+```
+
+```{ojs}
+//| echo: false
+series = grid.meta.rt_centers.flatMap((t, i) => [
+  {rt: t, density: cell.upper[i], boundary: "upper (+1)"},
+  {rt: t, density: cell.lower[i], boundary: "lower (-1)"}
+])
+```
+
+```{ojs}
+//| echo: false
+Plot.plot({
+  width: 700, height: 300, marginLeft: 55,
+  x: {label: "response time (s)", domain: [0, 4]},
+  y: {label: "density", domain: [0, 2.2]},
+  color: {domain: ["upper (+1)", "lower (-1)"],
+          range: ["#2a78d6", "#4a3aa7"], legend: true},
+  marks: [
+    Plot.areaY(series, {x: "rt", y: "density", fill: "boundary", fillOpacity: 0.22}),
+    Plot.lineY(series, {x: "rt", y: "density", stroke: "boundary", strokeWidth: 2}),
+    Plot.ruleY([0], {stroke: "#c3c2b7"})
+  ]
+})
+```
+
+```{ojs}
+//| echo: false
+md`At **v = ${cell.v}**, **a = ${cell.a}**: P(upper) = **${cell.p_upper.toFixed(3)}**, mean RT = **${cell.mean_rt.toFixed(3)} s**, error rate = **${(100 * (1 - cell.p_upper)).toFixed(1)}%**`
+```
+
+## Three things worth provoking deliberately
+
+- Set **v = 0**. Both curves become identical and the split goes to 50/50 —
+  drift is the *only* thing here that breaks the symmetry.
+- Push **v to 2 with a small**. Errors nearly vanish and the distribution gets
+  very tight. Remember this setting: it is the pathological design dissected in
+  [the next session](mcmc-and-identifiability.ipynb).
+- Raise **a** at fixed **v**. Accuracy improves *and* everything slows down.
+  That single trade-off is the speed-accuracy trade-off, in one knob.
+
+::: {.callout-note}
+## Why precomputed rather than live
+`ssm-simulators` is Cython — `cssm` ships compiled extension modules — so it
+cannot run in a browser, and this website never executes Python. The sliders
+therefore select among simulations run ahead of time by
+`_precompute_ddm_grid.py` (a 17 × 8 grid over drift and boundary separation,
+78 KB of JSON). Regenerate with:
+
+```bash
+cd tutorials && uv run python day2_bayes_toolkit/_precompute_ddm_grid.py
+```
+:::

@@ -194,6 +194,16 @@ fig.tight_layout()
 # signatures you want to be able to express.
 
 # %% [markdown]
+# ### Turn the knobs yourself
+#
+# The knobs live on a companion page:
+# **[DDM explorer](ddm-explorer.qmd)** — two sliders over drift and boundary
+# separation, showing what each does to the response-time distributions and to
+# accuracy. Open it alongside this notebook.
+#
+# It reads a grid of simulations precomputed by `_precompute_ddm_grid.py`,
+# because `ssm-simulators` is Cython and cannot run in a browser.
+
 # ### Exercise 1
 #
 # Pick any model from the zoo that we have not plotted, print its parameters and

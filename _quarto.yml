@@ -1,6 +1,12 @@
 project:
   type: website
   output-dir: _site
+  # Data files that interactive (OJS) figures fetch at view time. Quarto
+  # discovers resources referenced via FileAttachment automatically, but the
+  # notebook pages use a plain fetch() instead — FileAttachment is broken
+  # inside .ipynb here — so these have to be declared.
+  resources:
+    - "tutorials/**/*.json"
   # Positive globs only. Anything not matched (READMEs, CONTRIBUTING.md) stays
   # repo-only. Quarto also skips any path segment starting with "_" — files as
   # well as dirs — regardless of these globs; that is how solution and draft
