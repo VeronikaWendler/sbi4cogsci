@@ -26,8 +26,18 @@ default credible interval from 94% HDI to 89% ETI. Most PyMC material online
 predates that cutover and will not run.
 
 No GPU needed. No data is downloaded — everything is simulated in-notebook.
-The sampler-comparison section deliberately runs some chains that mix badly;
-expect a couple of minutes of sampling in total, not more.
+
+**Runtime for a full top-to-bottom run** (measured, Apple silicon, CPU only):
+
+| notebook | run "all cells" |
+|---|---|
+| `pymc-intro.ipynb` | ~6 s |
+| `simulating-cognitive-models.ipynb` | ~4 s |
+| `mcmc-and-identifiability.ipynb` | **~2.5 min** |
+
+Only the third is slow, and deliberately so: it fits the DDM several times and
+runs three samplers across three correlation levels. If you are following along
+live, run cells as you go rather than "Run All" at the start.
 
 ## Files
 

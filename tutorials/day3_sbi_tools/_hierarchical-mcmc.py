@@ -297,6 +297,18 @@ fig.tight_layout()
 #
 # Which is why you want the choice to be **per parameter**.
 # :::
+#
+# ::: {.callout-warning}
+# ## Do not memorise the crossover point
+# This sweep holds the **number of groups fixed at 8** and varies only the
+# observations within each. The crossover also moves with the number of groups,
+# the group-scale prior, and how much the groups actually differ — so "the
+# crossover is at 3 observations" is a fact about *this* setup, not a constant.
+#
+# What transfers is the *shape*: two curves that cross, and a rule for which
+# side you are on. Run the sweep on your own model rather than importing a
+# number from someone else's.
+# :::
 
 # %% [markdown]
 # ## 4. Per-parameter parameterization in HSSM

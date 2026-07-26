@@ -108,7 +108,10 @@ plt.tight_layout()
 # checks worth knowing.
 
 # %%
-model.sample_posterior_predictive(kind="response")
+# draws=100 is deliberate. The default regenerates a response for EVERY posterior
+# draw x every trial -- here 1000 x 3988, about 100 seconds -- while both plots
+# below consume only `n_samples=20`. Capping it costs nothing and saves ~80s.
+model.sample_posterior_predictive(kind="response", draws=100)
 model.plot_predictive()
 plt.gcf().set_size_inches(7.5, 4)
 plt.tight_layout()
@@ -175,14 +178,17 @@ for param, bound in lan_model.model_config.bounds.items():
 # `model.model_config.bounds` before setting your own priors.
 # :::
 #
-# Sampling a JAX-backed LAN has its own rule: use the numpyro sampler, and in a
-# notebook keep `cores=1, chains=1`, or native NUTS can raise cloudpickle errors.
-
-# %%
-lan_idata = lan_model.sample(sampler="numpyro", draws=500, tune=500,
-                             chains=1, cores=1, random_seed=RANDOM_SEED,
-                             progressbar=False)
-print(az.summary(lan_model.traces, var_names=PARAMS, kind="stats").to_string())
+# Fitting it is the same call as before, with one rule: a JAX-backed LAN wants
+# the **numpyro** sampler, and in a notebook keep `cores=1, chains=1` or native
+# NUTS can raise cloudpickle errors.
+#
+# ```python
+# lan_model.sample(sampler="numpyro", draws=500, tune=500, chains=1, cores=1)
+# ```
+#
+# We do not run it here — it is the same machinery you already saw, and the
+# minutes are better spent on the next section, where the likelihood is *yours*
+# rather than one HSSM downloaded for you.
 
 # %% [markdown]
 # ### Your own network — the JAX route, no ONNX, no torch
@@ -274,7 +280,44 @@ print("divergences:", int(jax_model.traces.sample_stats["diverging"].values.sum(
 # **Fixing a parameter (`t=0.3`) does not currently work with
 # `backend="jax"`** — it raises an `AssertionError` in pytensor's `specifyshape`
 # JAX dispatch. Keep parameters free, or narrow their bounds instead.
+# ([HSSM #1092](https://github.com/lnccbrown/HSSM/issues/1092))
 # :::
+
+# %% [markdown]
+# ### Exercise — break it on purpose
+#
+# The failure modes above are much easier to recognise once you have caused one.
+# Take `single_trial_logp`, delete `z` from the body (leave it in the signature),
+# refit, and look at the posterior for `z` and at the divergence count.
+#
+# Predict first: what will the `z` posterior look like?
+#
+# <details>
+# <summary>What happens, and why it is worth seeing once</summary>
+#
+# ```python
+# def broken_logp(data, v, a, z, t):            # z accepted but never used
+#     rt, ch = data[0], data[1]
+#     mu = jnp.log(a) - jnp.log(v**2 + 0.25) + t
+#     lr = jnp.log(jnp.maximum(rt, 1e-6))
+#     logp_rt = -lr - jnp.log(SIGMA) - 0.5*jnp.log(2*jnp.pi) - 0.5*((lr-mu)/SIGMA)**2
+#     p_up = 1.0 / (1.0 + jnp.exp(-2.0*v*a))    # no z
+#     return logp_rt + jnp.where(ch > 0, jnp.log(p_up), jnp.log1p(-p_up))
+# ```
+#
+# Every draw diverges and the posterior collapses to a point — `sd` of exactly
+# `0` on every parameter, not just on `z`. It looks like a catastrophic sampler
+# failure, and the cause is one unused argument.
+#
+# The reason the whole model freezes rather than just `z` going flat: `z` has an
+# identically-zero gradient, so the leapfrog integrator cannot make progress in
+# that coordinate at any step size, and the trajectory is rejected wholesale.
+#
+# The general lesson for surrogate likelihoods: **a parameter your network does
+# not actually condition on is not merely unidentified — it is actively toxic to
+# a gradient sampler.** Declare only the parameters your likelihood uses.
+#
+# </details>
 
 # %% [markdown]
 # ### The other route: ONNX, for cross-framework artifacts

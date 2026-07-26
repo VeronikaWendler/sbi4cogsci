@@ -489,37 +489,54 @@ print(comp.to_string(index=False, float_format=lambda v: f"{v:8.3f}"))
 # %% [markdown]
 # ### Exercise
 #
-# `t` (non-decision time) and `z` (start point) are supposed to survive the
-# extreme design intact — they are constrained by the leading edge of the RT
-# distribution and by choice proportion, not by the speed/accuracy trade-off.
+# We have watched `a` fall apart. **Predict, before you compute:** rank `a`, `z`
+# and `t` by how much each one's posterior widens between the balanced and the
+# extreme design.
 #
-# Check it. Plot the joint posterior of `t` against `a` for both designs and
-# report the correlations. Does `t` degrade the way `v` does?
-#
+# Then measure it — compare `sd` for each parameter across the two fits.
+
+# %%
+widths = []
+for design in ["balanced", "extreme"]:
+    post = fits[design].posterior.dataset
+    widths.append({"design": design,
+                   **{f"sd({k})": post[k].values.std() for k in ["a", "z", "t"]}})
+widths = pd.DataFrame(widths)
+print(widths.to_string(index=False, float_format=lambda x: f"{x:7.4f}"))
+print("\nwidening factor, extreme / balanced:")
+for k in ["a", "z", "t"]:
+    lo, hi = widths[f"sd({k})"]
+    print(f"   {k}: {hi / lo:5.1f}x")
+
+# %% [markdown]
 # <details>
-# <summary>Solution and what you should find</summary>
+# <summary>What this shows, and why it is not the tidy story</summary>
 #
-# ```python
-# fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-# for ax, design in zip(axes, ["balanced", "extreme"]):
-#     post = fits[design].posterior.dataset
-#     tt, aa = post["t"].values.ravel(), post["a"].values.ravel()
-#     ax.plot(tt, aa, "o", color=S.PRIMARY, ms=2.5, alpha=0.25, ls="none")
-#     S.truth_point(ax, TRUE["t"], TRUE["a"])
-#     ax.set(title=f"{design}: corr(t,a) = {np.corrcoef(tt, aa)[0,1]:+.2f}",
-#            xlabel="non-decision time $t$", ylabel="boundary $a$")
-#     ax.legend()
-# ```
+# The damage is **graded**, not all-or-nothing:
 #
-# `t` stays well recovered in both designs, and this is the result students
-# most often get backwards — non-decision time *feels* like the flimsiest
-# parameter and is in fact among the most robust, because it is pinned by the
-# leading edge of the RT distribution, which extreme accuracy does not erase.
-# Lüken et al. report the same for `t0` and `z`.
+# | parameter | widening | posterior mean (true) |
+# |---|---|---|
+# | `a` | ~22x | 1.19 → 1.66 (1.2) |
+# | `z` | ~6x | 0.52 → 0.63 (0.5) |
+# | `t` | **~1x** | 0.31 → 0.30 (0.3) |
 #
-# Compare the width of the `t` posterior across the two designs against what you
-# just saw happen to `a`. Do not take my word for the `a`–`t` correlation —
-# read it off your own fit.
+# **`t` is completely untouched** — the same posterior width in both designs.
+# This is the result people most often get backwards: non-decision time *feels*
+# like the flimsiest parameter and is in fact the most robust here, because it
+# is pinned by the **leading edge** of the RT distribution, and extreme accuracy
+# does not erase the leading edge.
+#
+# **`z` is not robust**, though it degrades far less than `a`. With almost every
+# response on one boundary, there is little left to identify a start-point bias
+# from, so `z` drifts toward the upper boundary. Lüken et al. group `z` with
+# `t0` as well recovered; at least in this 4-parameter setup, `z` sits clearly
+# between the two extremes rather than with `t`.
+#
+# Worth checking yourself: `corr(a, t)` is about **-0.60** in the balanced
+# design and only **-0.09** in the extreme one. The `a`–`t` trade-off gets
+# *weaker*, not stronger — because in the extreme design `a` is barely
+# constrained by anything, so it has stopped trading off against `t` in
+# particular.
 #
 # </details>
 

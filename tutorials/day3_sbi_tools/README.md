@@ -57,6 +57,19 @@ Select the `tutorials/.venv` kernel in your notebook editor. The first non-DDM
 HSSM model downloads an ONNX likelihood network from HuggingFace, so that step
 needs internet access.
 
+**Runtime for a full top-to-bottom run** (measured, Apple silicon, CPU only):
+
+| notebook | run "all cells" |
+|---|---|
+| `hssm-intro.ipynb` | ~2 min |
+| `hierarchical-mcmc.ipynb` | ~25 s |
+
+`hssm-intro` is dominated by sampling the DDM over all 3,988 trials and by the
+posterior predictive. Note it passes `draws=100` to
+`sample_posterior_predictive`: the default regenerates a response for every
+posterior draw of every trial, which costs ~100 s here, while the plots consume
+only 20 samples.
+
 ## Repo-only files
 
 Files beginning with `_` are deliberately kept off the published website:
