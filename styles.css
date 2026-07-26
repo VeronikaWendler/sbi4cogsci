@@ -592,3 +592,15 @@ h3 {
   outline: 2px solid rgba(124, 58, 237, 0.35);
   outline-offset: 3px;
 }
+/* Footer icon. Applied as a background rather than an <img> because Quarto does
+   not depth-rewrite relative paths inside page-footer content; url() here
+   resolves relative to this stylesheet (site root), so it is correct on every
+   page and under the /sbi4cogsci/ project subpath. */
+.footer-icon {
+  width: 80px;
+  height: 80px;
+  background-image: url("images/graphics/sbi4cogsci-icon.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
