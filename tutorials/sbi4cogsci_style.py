@@ -91,6 +91,61 @@ def divergences(ax, x, y, *, label="divergences", **kw):
                    linestyle="none", alpha=0.85, zorder=4, label=label, **kw)
 
 
+def signed_rt_hist(ax, rt, choices, *, bins=60, rt_max=4.0, color=None,
+                   label=None, lw=2, fill=False, alpha=0.20):
+    """Two-choice RT histogram, mirrored about zero.
+
+    Trials that ended at the **lower** boundary (choice `-1`) are drawn to the
+    left of zero, trials at the **upper** boundary (`+1`) to the right. This is
+    the conventional way to show a two-choice RT distribution: the shape of both
+    response types *and* the choice split are visible in one panel, because each
+    side's area is that response's share of the trials.
+
+    Returns (proportion_lower, proportion_upper).
+    """
+    import numpy as np
+
+    rt = np.asarray(rt).ravel()
+    ch = np.asarray(choices).ravel()
+    edges = np.linspace(0.0, rt_max, bins + 1)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    width = edges[1] - edges[0]
+    colour = color if color is not None else PRIMARY
+
+    props = {}
+    for sign, side in ((-1, "lower"), (1, "upper")):
+        mask = ch == sign
+        share = mask.mean()
+        props[side] = share
+        counts, _ = np.histogram(rt[mask], bins=edges)
+        # Scale so the two sides together integrate to 1: each side's AREA is
+        # then that response's probability.
+        dens = counts / max(counts.sum(), 1) * share / width
+        x = sign * centers
+        ax.step(x, dens, where="mid", color=colour, lw=lw,
+                label=label if sign == 1 else None)
+        if fill:
+            ax.fill_between(x, dens, step="mid", color=colour, alpha=alpha)
+
+    ax.axvline(0.0, color=AXIS, lw=1)
+    return props["lower"], props["upper"]
+
+
+def label_choice_axis(ax, rt_max=4.0, lower="lower boundary (-1)",
+                      upper="upper boundary (+1)"):
+    """Label a mirrored RT axis: |RT| with the side annotated."""
+    import numpy as np
+
+    ticks = np.array([-rt_max, -rt_max / 2, 0, rt_max / 2, rt_max])
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([f"{abs(t):g}" for t in ticks])
+    ax.set_xlim(-rt_max, rt_max)
+    # The side labels go in the axis label itself. Placing them inside the axes
+    # collides with either the legend (top) or the data (bottom), depending on
+    # the distribution — the label strip is the one place that is always free.
+    ax.set_xlabel(f"← {lower}     response time (s)     {upper} →")
+
+
 def annotate(ax, text, xy, xytext, **kw):
     """A muted callout arrow, for pointing at the interesting part of a figure."""
     return ax.annotate(text, xy=xy, xytext=xytext, color=MUTED, fontsize=10,

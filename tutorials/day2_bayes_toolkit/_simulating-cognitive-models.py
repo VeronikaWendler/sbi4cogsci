@@ -218,16 +218,40 @@ _openmp_status.print_status()
 # with no error and no warning. The prebuilt macOS wheels are commonly in this
 # state.
 #
-# To get real parallelism you have to install the OpenMP runtime and rebuild:
+# To get real parallelism you have to install the OpenMP runtime and rebuild
+# **from source** — reinstalling the wheel will not do it, because the wheel is
+# what lacks OpenMP:
 #
 # ```bash
-# brew install libomp          # macOS   (Linux: apt install build-essential)
+# brew install libomp gsl      # macOS   (Linux: apt install build-essential libgsl-dev)
 # pip install --force-reinstall --no-binary ssm-simulators ssm-simulators
 # ```
 #
-# For this workshop it does not matter — single-threaded is already fast enough.
-# It matters when you generate **training data for a neural likelihood**, where
-# you may want tens of millions of trials.
+# </details>
+#
+# ### But first check whether it would help you at all
+#
+# `n_threads` parallelises over **samples, not over trials** — and that
+# distinction decides whether it does anything for your workload. Timings from a
+# source-built copy with OpenMP enabled, on an 18-core machine:
+#
+# | workload | `theta` / `n_samples` | speedup at 16 threads |
+# |---|---|---|
+# | trial-varying, one draw each — **what we just did** | matrix / `1` | **none** (0.98×) |
+# | one parameter set, 1M draws | vector / `1_000_000` | **10.7×** |
+# | 200 parameter sets, 2000 draws each | matrix / `2000` | **10.7×** |
+#
+# The form used above asks for exactly **one sample per parameter set**, so
+# there is nothing to spread across threads — recompiling with OpenMP would buy
+# it nothing. The two forms that *do* benefit are precisely the shape of
+# **training-data generation for a neural likelihood**, where you want many
+# draws per parameter setting.
+#
+# <details class="sbi-key" open>
+# <summary>🔑 <b>The rule</b></summary>
+#
+# Threading helps when `n_samples` is large. If your `n_samples` is 1, the
+# number of threads is irrelevant no matter how your copy was built.
 #
 # </details>
 
@@ -275,28 +299,39 @@ for name in ["ddm", "angle", "weibull", "lba3"]:
 # the RT distribution.
 
 # %%
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 3.8))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.5, 4.0))
 
-# Left: the boundary itself
+# Left: the boundaries. Draw BOTH of them — a two-choice model has an upper and
+# a lower bound, the start point sits between them, and evidence terminates at
+# whichever it reaches first. Showing only the upper one hides half the model.
 t_grid = np.linspace(0, 3, 200)
 a0 = 1.5
-ax1.plot(t_grid, np.full_like(t_grid, a0), color=S.PRIMARY, label="ddm (constant)")
+ax1.plot(t_grid, np.full_like(t_grid, a0), color=S.PRIMARY, lw=2,
+         label="ddm (constant)")
+ax1.plot(t_grid, -np.full_like(t_grid, a0), color=S.PRIMARY, lw=2)
 for theta_val, ls in [(0.4, "--"), (0.8, ":")]:
-    ax1.plot(t_grid, np.maximum(a0 - np.tan(theta_val) * t_grid, 0),
-             color=S.NAIVE, linestyle=ls, label=f"angle, $\\theta$={theta_val}")
-ax1.set(title="Decision boundary over time", xlabel="time (s)",
-        ylabel="boundary", ylim=(0, 1.7))
-ax1.legend()
+    bound = np.maximum(a0 - np.tan(theta_val) * t_grid, 0)
+    ax1.plot(t_grid, bound, color=S.NAIVE, linestyle=ls, lw=2,
+             label=f"angle, $\\theta$={theta_val}")
+    ax1.plot(t_grid, -bound, color=S.NAIVE, linestyle=ls, lw=2)
+ax1.axhline(0.0, color=S.MUTED, lw=1, ls="-")           # start point, z = 0.5
+ax1.text(2.95, 0.06, "start point ($z = 0.5$)", fontsize=8, color=S.MUTED, ha="right")
+ax1.text(2.95, a0 * 0.72, "upper: choice $+1$", fontsize=9, color=S.MUTED, ha="right")
+ax1.text(2.95, -a0 * 0.72, "lower: choice $-1$", fontsize=9, color=S.MUTED,
+         ha="right", va="top")
+ax1.set(title="Both decision boundaries over time", xlabel="time (s)",
+        ylabel="evidence", ylim=(-1.8, 1.8))
+ax1.legend(loc="lower left", fontsize=8)
 
-# Right: what that does to RTs
+# Right: what that does to RTs, split by which boundary was reached.
 for name, theta, colour in [("ddm", [0.5, 1.5, 0.5, 0.3], S.PRIMARY),
                             ("angle", [0.5, 1.5, 0.5, 0.3, 0.8], S.NAIVE)]:
-    o = Simulator(model=name).simulate(theta=theta, n_samples=3000,
+    o = Simulator(model=name).simulate(theta=theta, n_samples=6000,
                                        random_state=RANDOM_SEED)
-    ax2.hist(o["rts"].flatten(), bins=60, range=(0, 5), density=True,
-             histtype="step", lw=2, color=colour, label=name)
-ax2.set(title="Collapsing bounds shorten the tail", xlabel="RT (s)", ylabel="density")
-ax2.legend()
+    S.signed_rt_hist(ax2, o["rts"], o["choices"], color=colour, label=name)
+ax2.set(title="Collapsing bounds shorten the tail", ylabel="density")
+S.label_choice_axis(ax2, rt_max=4.0)
+ax2.legend(loc="upper left", fontsize=9)
 fig.tight_layout()
 
 # %% [markdown]
@@ -313,7 +348,7 @@ fig.tight_layout()
 #   — a companion page for this session: sliders over drift and boundary
 #   separation, showing what each does to the response-time distributions and
 #   to accuracy.
-# - **[ssms-gui](https://github.com/AlexanderFengler/ssms-gui)** — a dashboard
+# - **[ssms-gui](https://huggingface.co/spaces/franklab/ssms_gui)** — a dashboard
 #   for playing with `ssm-simulators` output directly, across the model zoo
 #   rather than just the DDM. Built for exactly this kind of build-intuition
 #   exploration.
@@ -361,6 +396,9 @@ fig.tight_layout()
 # `a` included — it is not an offset that `a` gets added to. `a` must be listed
 # first in its parameter list.
 
+# **Step 1 — write the function.** Nothing library-specific: it takes time and
+# its own parameters, and returns the boundary at that time.
+
 # %%
 from ssms.config import register_boundary
 from ssms.config.model_config_builder import ModelConfigBuilder
@@ -372,35 +410,98 @@ def exp_collapse(t, a=1.0, rate=0.5):
     return a * np.exp(-rate * np.asarray(t))
 
 
+# It is an ordinary function; you can call and plot it before involving ssms.
+print("at t=0:", exp_collapse(0.0, a=1.5, rate=0.6),
+      " at t=1:", round(float(exp_collapse(1.0, a=1.5, rate=0.6)), 3))
+
+# %% [markdown]
+# **Step 2 — register it, so the library knows the name.**
+#
+# `ssm-simulators` keeps **registries**: lookup tables mapping a name to an
+# implementation plus the parameters it expects. There is one for boundaries,
+# one for drifts, one for whole models. Registering is what lets a *string* like
+# `"exp_collapse"` mean something to code that never imported your function.
+#
+# The parameter list is part of the contract — it tells the simulator which
+# entries of `theta` to route to your function, and **`a` must come first**.
+
+# %%
 register_boundary("exp_collapse", exp_collapse, ["a", "rate"])
 
-cfg_custom = ModelConfigBuilder.from_model("ddm")
-cfg_custom = ModelConfigBuilder.add_boundary(cfg_custom, "exp_collapse", ["a", "rate"])
-
-my_sim = Simulator(model=cfg_custom)
-o_slow = my_sim.simulate(theta={"v": 0.8, "a": 1.5, "z": 0.5, "t": 0.2, "rate": 0.15},
-                         n_samples=3000, random_state=RANDOM_SEED)
-o_fast = my_sim.simulate(theta={"v": 0.8, "a": 1.5, "z": 0.5, "t": 0.2, "rate": 1.2},
-                         n_samples=3000, random_state=RANDOM_SEED)
-
-fig, ax = plt.subplots(figsize=(6.5, 3.6))
-for o, colour, lbl in [(o_slow, S.PRIMARY, "rate = 0.15 (slow collapse)"),
-                       (o_fast, S.NAIVE, "rate = 1.2 (fast collapse)")]:
-    ax.hist(o["rts"].flatten(), bins=60, range=(0, 5), density=True,
-            histtype="step", lw=2, color=colour, label=lbl)
-ax.set(title="A boundary you invented, five minutes ago", xlabel="RT (s)",
-       ylabel="density")
-ax.legend()
-fig.tight_layout()
+from ssms.config import boundary_registry
+print("boundaries now available:")
+print("  ", sorted(boundary_registry.get_boundary_registry().list_boundaries()))
 
 # %% [markdown]
 # <details class="sbi-key" open>
 # <summary>🔑 <b>Registration is per-process</b></summary>
 #
-# `register_boundary` writes into an in-memory registry. Restart the kernel and
-# your model is gone — re-run the cell. In a script, register at import time.
+# `register_boundary` writes into an **in-memory** registry. Restart the kernel
+# and your model is gone — re-run the cell. In a script or package, register at
+# import time so it always happens before anything looks the name up.
 #
 # </details>
+#
+# **Step 3 — build a model config that uses it.**
+#
+# A **model config** is the dictionary that fully describes a model: its
+# parameter names, their bounds, how many choices, which boundary and drift
+# functions, and which compiled simulator to call. `model_config["ddm"]` from
+# section 3 was one of these.
+#
+# `ModelConfigBuilder` derives new configs from existing ones, so you inherit
+# everything about the DDM and swap out only the boundary.
+
+# %%
+cfg_custom = ModelConfigBuilder.from_model("ddm")
+cfg_custom = ModelConfigBuilder.add_boundary(cfg_custom, "exp_collapse", ["a", "rate"])
+
+print("boundary_name  :", cfg_custom["boundary_name"])
+print("boundary_params:", cfg_custom["boundary_params"])
+print("params         :", cfg_custom["params"])
+
+# %% [markdown]
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b><code>add_boundary</code> does not declare your new parameter</b></summary>
+#
+# Look at `params` above: still `['v', 'a', 'z', 't']`. `rate` lives in
+# `boundary_params` and `simulate()` accepts it — but it is **absent** from
+# `params`, `param_bounds` and `n_params`, and `validate_config` reports the
+# config as valid anyway.
+#
+# Simulation works, so this is easy to miss. Anything that reads the *parameter
+# box* — priors, bounds, the sampling ranges used to train a neural likelihood —
+# will not see `rate` until you add it yourself. Reported upstream as
+# [ssm-simulators #308](https://github.com/lnccbrown/ssm-simulators/issues/308).
+#
+# </details>
+#
+# **Step 4 — simulate from it.** From here it is an ordinary model.
+
+# %%
+my_sim = Simulator(model=cfg_custom)
+o_slow = my_sim.simulate(theta={"v": 0.8, "a": 1.5, "z": 0.5, "t": 0.2, "rate": 0.15},
+                         n_samples=6000, random_state=RANDOM_SEED)
+o_fast = my_sim.simulate(theta={"v": 0.8, "a": 1.5, "z": 0.5, "t": 0.2, "rate": 1.2},
+                         n_samples=6000, random_state=RANDOM_SEED)
+
+fig, ax = plt.subplots(figsize=(7.0, 3.8))
+for o, colour, lbl in [(o_slow, S.PRIMARY, "rate = 0.15 (slow collapse)"),
+                       (o_fast, S.NAIVE, "rate = 1.2 (fast collapse)")]:
+    lower, upper = S.signed_rt_hist(ax, o["rts"], o["choices"],
+                                    color=colour, label=lbl)
+    print(f"{lbl:32s} P(upper) = {upper:.3f}")
+ax.set(title="A boundary you invented, five minutes ago", ylabel="density")
+S.label_choice_axis(ax, rt_max=4.0)
+ax.legend(loc="upper left", fontsize=9)
+fig.tight_layout()
+
+# %% [markdown]
+# A faster collapse means less evidence is required as time passes, so responses
+# arrive sooner — and because the bound drops symmetrically on both sides, the
+# accuracy advantage shrinks too. Both effects are visible at once in the
+# mirrored plot: the fast-collapse curve is pulled toward zero on *both* sides,
+# and its two sides are more nearly equal in area.
 
 # %% [markdown]
 # ### Route B — write the whole simulator
@@ -436,14 +537,18 @@ rt_r, ch_r = np.asarray(o["rts"]).flatten(), np.asarray(o["choices"]).flatten()
 print(f"P(choice = +1) = {(ch_r == 1).mean():.3f}   "
       f"(closed form v1/(v0+v1) = {2/3:.3f})")
 
-fig, ax = plt.subplots(figsize=(6.5, 3.4))
-for c_val, colour, lbl in [(1, S.PRIMARY, "+1 (faster accumulator)"),
-                           (-1, S.NAIVE, "-1")]:
-    ax.hist(rt_r[ch_r == c_val], bins=50, range=(0, 3), density=True,
-            histtype="step", lw=2, color=colour, label=lbl)
-ax.set(title="A model that is not a diffusion", xlabel="RT (s)", ylabel="density")
-ax.legend()
+fig, ax = plt.subplots(figsize=(7.0, 3.6))
+lower, upper = S.signed_rt_hist(ax, rt_r, ch_r, rt_max=3.0,
+                                color=S.PRIMARY, label="racing exponentials",
+                                fill=True)
+ax.set(title="A model that is not a diffusion", ylabel="density")
+S.label_choice_axis(ax, rt_max=3.0,
+                    lower="$-1$ (accumulator 0 won)",
+                    upper="$+1$ (accumulator 1 won)")
+ax.legend(loc="upper left", fontsize=9)
 fig.tight_layout()
+
+print(f"area on the +1 side = {upper:.3f}  (the closed form again)")
 
 # %% [markdown]
 # The analytic check matters: for two racing exponentials,
