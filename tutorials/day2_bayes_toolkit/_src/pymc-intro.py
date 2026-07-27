@@ -381,6 +381,81 @@ print(post.quantile([0.055, 0.5, 0.945], dim=["chain", "draw"])
 print(sorted(idata["sample_stats"].dataset.data_vars))
 
 # %% [markdown]
+# ### `coords` and `dims` — naming your own dimensions
+#
+# Everything above worked because `chain` and `draw` are *named* dimensions.
+# **You can name your parameters' dimensions too**, and once a model has more
+# than one of anything — one drift per condition, one intercept per participant
+# — you will want to.
+#
+# The alternative is `shape=`, which works but leaves the result anonymous.
+# Compare. Three group means, three observations each:
+
+# %%
+y_grp = rng.normal([1.0, 2.0, 3.0], 1.0, size=(40, 3))
+
+# (a) shape= — correct, but the posterior does not know what the axis MEANS
+with pm.Model() as m_shape:
+    mu_s = pm.Normal("mu", 0.0, 5.0, shape=3)
+    pm.Normal("y", mu=mu_s, sigma=1.0, observed=y_grp)
+    idata_shape = pm.sample(300, tune=300, chains=2, cores=1, nuts_sampler="pymc",
+                            progressbar=False, random_seed=RANDOM_SEED)
+
+print("dimension names:", list(idata_shape.posterior.dataset["mu"].dims))
+print(az.summary(idata_shape, kind="stats").to_string())
+
+# %%
+# (b) coords + dims — the model carries the labels, and so does everything after
+COORDS = {"condition": ["low", "med", "high"]}
+
+with pm.Model(coords=COORDS) as m_dims:
+    mu_d = pm.Normal("mu", 0.0, 5.0, dims="condition")
+    pm.Normal("y", mu=mu_d, sigma=1.0, observed=y_grp)
+    idata_dims = pm.sample(300, tune=300, chains=2, cores=1, nuts_sampler="pymc",
+                           progressbar=False, random_seed=RANDOM_SEED)
+
+print("dimension names:", list(idata_dims.posterior.dataset["mu"].dims))
+print(az.summary(idata_dims, kind="stats").to_string())
+
+# %% [markdown]
+# `mu[0], mu[1], mu[2]` became `mu[low], mu[med], mu[high]`. That is not
+# cosmetic — the labels are now data you can compute with:
+
+# %%
+post_d = idata_dims.posterior.dataset
+print("the 'high' condition only:",
+      round(float(post_d["mu"].sel(condition="high").mean()), 3))
+
+# A contrast, by name rather than by remembering which integer is which.
+contrast = post_d["mu"].sel(condition="high") - post_d["mu"].sel(condition="low")
+print(f"high - low = {float(contrast.mean()):.3f} "
+      f"[{float(contrast.quantile(0.055)):.3f}, {float(contrast.quantile(0.945)):.3f}]")
+
+# %% [markdown]
+# <details class="sbi-tip" open>
+# <summary>💡 <b>Why this matters more than it looks</b></summary>
+#
+# Three reasons to reach for `dims` from the start:
+#
+# 1. **You stop counting indices.** `sel(condition="high")` cannot silently
+#    become the wrong group the way `[2]` can when you reorder a list.
+# 2. **Plots and tables label themselves.** `az.summary`, `az.plot_forest` and
+#    the rest read the coordinate values, so figures arrive with real names on
+#    them instead of `mu[0]`.
+# 3. **It is what the libraries above PyMC do anyway.** Every posterior you see
+#    for the rest of this course is labelled this way — at 14:30 you will write
+#    `pm.Model(coords=...)` with `dims="coherence"` for a drift rate per
+#    coherence level, and tomorrow HSSM will hand you back
+#    `a_C(cond)[hard]` without you asking. Recognising where those labels come
+#    from is the point of this section.
+#
+# The cost is one dictionary. `pm.Model(coords={"condition": [...]})` declares
+# the labels once; `dims="condition"` on a variable adopts them and sets its
+# shape for you — note we never wrote `shape=3` in the second model.
+#
+# </details>
+
+# %% [markdown]
 # ## 3. Looking at a posterior
 
 # %%
@@ -931,8 +1006,14 @@ print(f"-> at the centre, noise is "
 # %% [markdown]
 # ## 5. The same regression, in bambi
 #
+# <img src="../../images/logos/bambi-logo.png" alt="bambi logo"
+#      style="display:block; margin:0.5rem auto 1.5rem auto; width:240px">
+#
 # For standard regression structures, writing the graph out by hand is
 # repetitive. **bambi** takes a formula and builds the PyMC model for you.
+#
+# It is also the layer HSSM is built on, so the formula syntax you learn here is
+# the syntax you will use tomorrow morning to put a regression on a drift rate.
 
 # %%
 model_bmb = bmb.Model("y ~ 1 + x", data)
@@ -1112,12 +1193,19 @@ fig.tight_layout()
 # %% [markdown]
 # ## 6. Optional: the `do` operator
 #
-# *(Skip if we are short on time — nothing later depends on it.)*
+# *(Skip if we are short on time — nothing later depends on it. But it is the
+# mechanism behind every "dataset whose truth we know" in this course, so it is
+# worth ten minutes at some point.)*
 #
 # PyMC can **intervene** on a model, not just condition on it. `pm.do` replaces
 # a variable with a fixed value and **cuts the arrows coming into it**. That is
 # a different operation from observing the same value, and the difference is the
 # whole of causal inference in one idea.
+#
+# It has a second use that matters more for us day to day, and we come back to
+# it at the end of this section: **`do` is how you turn a fitted model back into
+# a generator with parameters you choose**, which is exactly what a parameter
+# recovery study needs.
 #
 # To see it you need a model where something upstream exists. Take a chain:
 #
@@ -1232,18 +1320,185 @@ fig.tight_layout()
 # </details>
 
 # %% [markdown]
+# ### The use you will actually reach for: parameter recovery
+#
+# Causal language aside, here is the everyday reason a cognitive modeller wants
+# `pm.do`. **A model you can fit is also a model you can generate from** — and
+# `do` is the switch between the two.
+#
+# Pin every free parameter to a value you chose, draw from what remains, and you
+# have a dataset whose true parameters you know *exactly*. Fit that dataset with
+# the same model and you can ask the only question that really validates an
+# analysis pipeline:
+#
+# > If the data really did come from this model, would I get the right answer back?
+#
+# This is **parameter recovery**, and it is worth doing before any real dataset
+# is touched. It catches an unidentifiable design, a coding error, a prior that
+# is quietly doing the work, and a sampler that has not converged — none of
+# which announce themselves on real data, where you never learn the truth.
+#
+# The whole loop, on the model from section 2:
+
+# %%
+# 1. GENERATE — intervene on the model to fix mu and sigma at chosen values.
+TRUE_PARAMS = {"mu": 4.2, "sigma": 0.8}
+
+with pm.Model() as recovery_model:
+    mu_r = pm.Normal("mu", 0.0, 10.0)
+    sigma_r = pm.HalfNormal("sigma", 5.0)
+    pm.Normal("y", mu=mu_r, sigma=sigma_r, shape=200)
+
+generator = pm.do(recovery_model,
+                  {recovery_model["mu"]: TRUE_PARAMS["mu"],
+                   recovery_model["sigma"]: TRUE_PARAMS["sigma"]})
+with generator:
+    synthetic = pm.sample_prior_predictive(draws=1, random_seed=RANDOM_SEED)
+y_synth = synthetic["prior"].dataset["y"].values.ravel()
+
+print(f"generated {y_synth.size} observations "
+      f"| sample mean {y_synth.mean():.3f}, sample sd {y_synth.std():.3f}")
+
+# %%
+# 2. RECOVER — hand the synthetic data back to the SAME model and fit it.
+with pm.Model() as fit_model:
+    mu_f = pm.Normal("mu", 0.0, 10.0)
+    sigma_f = pm.HalfNormal("sigma", 5.0)
+    pm.Normal("y", mu=mu_f, sigma=sigma_f, observed=y_synth)
+    idata_rec = pm.sample(draws=1000, tune=1000, chains=4, cores=1,
+                          nuts_sampler="pymc", progressbar=False,
+                          random_seed=RANDOM_SEED)
+
+# 3. CHECK — does the posterior cover the values we generated with?
+print(az.summary(idata_rec, kind="stats", ci_prob=0.89).to_string(), "\n")
+
+# Compute the interval from the DRAWS, not by reading it back out of the
+# summary table: az.summary returns formatted STRINGS rounded to a couple of
+# significant figures, so `4.2` comes back as the string "4".
+post_rec = idata_rec.posterior.dataset
+for name, truth in TRUE_PARAMS.items():
+    lo, hi = np.percentile(post_rec[name].values, [5.5, 94.5])
+    print(f"  {name:6s} true {truth:5.2f}   89% interval [{lo:5.2f}, {hi:5.2f}]   "
+          f"{'COVERED' if lo <= truth <= hi else '*** MISSED ***'}")
+
+# %% [markdown]
+# Look closely at that result before drawing a conclusion from it: `mu` is
+# covered and **`sigma` is not** — its 89% interval stops just short of 0.80.
+#
+# Nothing is broken. The 200 numbers we generated happen to have a sample sd of
+# about 0.73, and the posterior has correctly recovered *the data it was given*.
+# With $n = 200$ the sampling sd of a sample sd is roughly
+# $\sigma/\sqrt{2n} \approx 0.04$, so landing 0.07 low is an ordinary draw.
+#
+# Which exposes the real lesson: **one recovery run tells you almost nothing.**
+# An 89% interval is *supposed* to miss about 11% of the time. A single run that
+# covers is weak evidence, and a single run that misses is not a bug report.
+#
+# The honest version repeats the whole loop over many simulated datasets and
+# asks whether the intervals cover **at their nominal rate**:
+
+# %%
+def recover_once(seed, n=200):
+    """Generate one dataset from TRUE_PARAMS, refit, return the 89% intervals."""
+    with pm.Model() as gen:
+        pm.Normal("mu", 0.0, 10.0)
+        pm.HalfNormal("sigma", 5.0)
+        pm.Normal("y", mu=gen["mu"], sigma=gen["sigma"], shape=n)
+
+    with pm.do(gen, {gen["mu"]: TRUE_PARAMS["mu"],
+                     gen["sigma"]: TRUE_PARAMS["sigma"]}):
+        ys = (pm.sample_prior_predictive(draws=1, random_seed=seed)
+              ["prior"].dataset["y"].values.ravel())
+
+    with pm.Model() as fit:
+        pm.Normal("mu", 0.0, 10.0)
+        pm.HalfNormal("sigma", 5.0)
+        pm.Normal("y", mu=fit["mu"], sigma=fit["sigma"], observed=ys)
+        idt = pm.sample(600, tune=600, chains=2, cores=1, nuts_sampler="pymc",
+                        progressbar=False, random_seed=seed)
+
+    return {k: np.percentile(idt.posterior.dataset[k].values, [5.5, 94.5])
+            for k in TRUE_PARAMS}
+
+
+N_REPS = 40
+hits = {k: 0 for k in TRUE_PARAMS}
+for seed in range(N_REPS):
+    for k, (lo, hi) in recover_once(seed).items():
+        hits[k] += lo <= TRUE_PARAMS[k] <= hi
+
+print(f"{N_REPS} simulated datasets, 89% intervals:\n")
+for k, n_hit in hits.items():
+    print(f"  {k:6s} covered {n_hit:2d}/{N_REPS} = {n_hit / N_REPS:.0%}   "
+          f"(nominal 89%)")
+
+# %% [markdown]
+# Both land near 89%, which is the result you want: the intervals are
+# **calibrated**. Had one come back at 60%, the model would be overconfident and
+# no single fit from it could be trusted — and you would never have found that
+# out from one run, or from any amount of real data.
+#
+# <details class="sbi-note">
+# <summary>📝 <b>Read the coverage numbers with their own error bars</b></summary>
+#
+# With 40 replications, the standard error on a coverage estimate near 0.89 is
+# about $\sqrt{0.89 \times 0.11 / 40} \approx 5\%$. So anything from roughly 79%
+# to 99% is consistent with a correctly calibrated interval, and you should not
+# read a difference of one or two hits as a finding. Serious calibration work
+# uses hundreds of replications — or **simulation-based calibration**, which
+# checks the whole rank distribution rather than one interval, and which this
+# summer school covers in its own right.
+#
+# </details>
+#
+# Note what `pm.do` bought us: **one model definition served as both the
+# generator and the estimator.** Without it you would write the simulation twice
+# — once as numpy, once as a PyMC model — and the two versions drift apart. The
+# bug that then survives is the worst kind, because your recovery study is
+# validating the wrong thing and passing.
+#
+# <details class="sbi-tip" open>
+# <summary>💡 <b>Where this goes for cognitive models</b></summary>
+#
+# Everything above generalises directly, and the rest of the course leans on it:
+#
+# - **At 14:30 today** you fit a DDM to data simulated from known parameters,
+#   and check recovery cell by cell. **At 15:00** you meet a design where
+#   recovery *fails* — drift and non-decision time trade off — and the only
+#   reason you can tell is that the truth is known.
+# - **Tomorrow at 09:30**, HSSM's `model.sample_do(...)` is this exact operation
+#   with a nicer signature: pin `v`, `a`, `z`, `t` (or the coefficients of a
+#   regression on them) and draw a dataset. The DDM dataset in that session is
+#   built precisely this way.
+# - For a real study, run recovery across a **grid** of plausible parameters
+#   rather than one point. A model can recover beautifully at the centre of
+#   parameter space and fall apart at the edges, and the edge is often where
+#   your participants are.
+#
+# The habit to take away: **before fitting a new model to real data, fit it to
+# fake data from itself.** It is cheap, and it is the only setting in which you
+# ever get to grade your own answer.
+#
+# </details>
+
+# %% [markdown]
 # ## What to take away
 #
 # <details class="sbi-tip" open>
-# <summary>💡 <b>The five things that matter</b></summary>
+# <summary>💡 <b>The things that matter</b></summary>
 #
 # 1. **A distribution is used two ways.** `pm.Normal.dist(...)` is a value you
 #    can draw from and take `logp` of. `pm.Normal("name", ...)` inside a model
 #    context is a **node in a graph**, and the name is how you get results back.
-# 2. **You are building a graph, behind the scenes.** PyTensor allows you to compile 
+# 2. **You are building a graph, behind the scenes.** PyTensor allows you to compile
 #    the graph into multiple backend frameworks.
 # 3. **Bambi** is a front-end to PyMC that makes specifying hierarchical mixed-effects
 #    regressions much easier. It is, in turn, the primary backend for HSSM.
+# 4. **Name your dimensions.** `coords` + `dims` cost one dictionary and give you
+#    `mu[high]` instead of `mu[2]`, everywhere downstream — including in the
+#    labels HSSM hands back tomorrow.
+# 5. **`pm.do` turns a model into its own data generator.** Pin the parameters,
+#    simulate, refit, check the truth is covered. Do this before any real data.
 #
 # </details>
 #
