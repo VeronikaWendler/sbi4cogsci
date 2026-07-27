@@ -611,3 +611,74 @@ h3 {
   background-repeat: no-repeat;
   background-position: center;
 }
+
+/* Collapsible asides in the tutorial notebooks.
+   ---------------------------------------------------------------------------
+   These replace Quarto's ::: {.callout-*} divs. A pandoc div is Quarto-only
+   syntax: it renders correctly on this site but shows up as LITERAL TEXT in
+   JupyterLab, VS Code and marimo, which is where the notebooks are actually
+   read and run. <details> is plain HTML, so one source renders everywhere —
+   and it collapses, which is what the exercise solutions already do.
+
+   The emoji lives in the source rather than in a ::before, so the label
+   survives in the renderers this stylesheet never reaches. */
+details.sbi-tip,
+details.sbi-note,
+details.sbi-key,
+details.sbi-warn {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 12px;
+  padding: 0.7rem 1.1rem;
+  margin: 1.4rem 0;
+}
+
+details.sbi-tip {
+  border-left-color: #16a34a;
+  background: #f2fbf5;
+}
+
+details.sbi-note {
+  border-left-color: #6366f1;
+  background: #f6f5ff;
+}
+
+details.sbi-key {
+  border-left-color: #0284c7;
+  background: #f1f9fe;
+}
+
+details.sbi-warn {
+  border-left-color: #d97706;
+  background: #fffbef;
+}
+
+details.sbi-tip > summary,
+details.sbi-note > summary,
+details.sbi-key > summary,
+details.sbi-warn > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+details.sbi-tip[open] > summary,
+details.sbi-note[open] > summary,
+details.sbi-key[open] > summary,
+details.sbi-warn[open] > summary {
+  margin-bottom: 0.6rem;
+}
+
+details.sbi-tip > *:last-child,
+details.sbi-note > *:last-child,
+details.sbi-key > *:last-child,
+details.sbi-warn > *:last-child {
+  margin-bottom: 0;
+}
+
+/* The logo strip at the top of each tutorial. */
+.tutorial-logo {
+  display: block;
+  margin: 0.5rem auto 1.5rem auto;
+}

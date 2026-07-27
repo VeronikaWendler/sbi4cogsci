@@ -475,6 +475,11 @@ $$v_{gi} \;=\; \beta^{(g)}_0 \;+\; \beta^{(g)}_1 \cdot \text{difficulty}_i,
 
 Every participant gets their own slope. The participants with 5 trials get one
 anyway — borrowed, honestly, from everyone else.
+
+**Result, for participants with fewer than 30 trials: the slope error drops by
+about 62%.** A slope needs both trials *and* spread in the covariate, so it is
+the first thing to fall apart when data is thin, and the thing pooling rescues
+most.
 :::
 
 . . .

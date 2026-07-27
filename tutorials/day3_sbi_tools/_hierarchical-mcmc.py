@@ -94,8 +94,9 @@ F.fig_shrinkage(pool)
 F.fig_pooling_error(pool)
 
 # %% [markdown]
-# ::: {.callout-note}
-# ## What pooling actually is
+# <details class="sbi-note">
+# <summary>📝 <b>What pooling actually is</b></summary>
+#
 # With five trials, a no-pooling estimate has almost no information to work
 # with, so it falls back on whatever prior you happened to write down. Partial
 # pooling also falls back on a prior — but on the **population**, estimated from
@@ -103,7 +104,8 @@ F.fig_pooling_error(pool)
 #
 # **Pooling replaces an arbitrary prior with an earned one.** That is the whole
 # idea, and everything after this is the price you pay for it.
-# :::
+#
+# </details>
 #
 # > **Poll.** Partial pooling improved the sparse participants a lot and the
 # > dense ones not at all. Why not at all?
@@ -152,8 +154,9 @@ for key, label in [("no_pooling", "no pooling"), ("partial_pooling", "partial po
 # and $\tau$ is a regularisation strength *learned from the data* rather than
 # guessed by you.
 #
-# ::: {.callout-warning}
-# ## Two honest caveats before you quote this number
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>Two honest caveats before you quote this number</b></summary>
+#
 # **The gap depends on how sparse your groups are.** Ours has participants with
 # five trials, and those shrink hard. Re-run with 600 trials for everyone and
 # the gap nearly closes: each participant's own data identifies their drift,
@@ -167,14 +170,17 @@ for key, label in [("no_pooling", "no pooling"), ("partial_pooling", "partial po
 # score — the benefit showed up in the **estimates**, which is what we measured
 # before. If you care about generalising to a *new participant*, the matching
 # quantity is leave-one-participant-out, not this.
-# :::
 #
-# ::: {.callout-note}
-# ## ArviZ 1.x naming
+# </details>
+#
+# <details class="sbi-note">
+# <summary>📝 <b>ArviZ 1.x naming</b></summary>
+#
 # `az.loo(idata)` returns an object whose attribute is **`.p`**, although it
 # *prints* as `p_loo`. And `az.waic` no longer exists — ArviZ 1.0 removed it in
 # favour of PSIS-LOO. Nearly every tutorial you find online predates this.
-# :::
+#
+# </details>
 
 # %% [markdown]
 # ## 2. Neal's funnel — the geometry, before any data
@@ -198,12 +204,14 @@ F.fig_funnel(x_prior, v_prior)
 # tuned for the mouth is wildly unstable in the neck; one tuned for the neck
 # would take forever to cross the mouth.
 #
-# ::: {.callout-important}
-# ## The failure mode is bias, not slowness
+# <details class="sbi-key" open>
+# <summary>🔑 <b>The failure mode is bias, not slowness</b></summary>
+#
 # A sampler that cannot enter the neck does not merely explore it *slowly* — it
 # systematically **never goes there**, so every posterior expectation is wrong.
 # And $\hat{R}$ cannot see this, because all the chains fail the same way.
-# :::
+#
+# </details>
 
 # %% [markdown]
 # ## 3. Sampling it, both ways
@@ -408,8 +416,9 @@ ax2.legend()
 fig.tight_layout()
 
 # %% [markdown]
-# ::: {.callout-note}
-# ## The rule, stated properly
+# <details class="sbi-note">
+# <summary>📝 <b>The rule, stated properly</b></summary>
+#
 # "Always non-center hierarchical models" is the single most widespread piece of
 # wrong advice in applied Bayesian work. The correct statement is: **non-center
 # the parameters whose groups are data-poor.** With enough data per group the
@@ -417,7 +426,8 @@ fig.tight_layout()
 # is what shapes each group's posterior.
 #
 # Which is why you want the choice to be **per parameter**.
-# :::
+#
+# </details>
 #
 # ### What that looks like in the geometry
 #
@@ -450,18 +460,21 @@ for (scale, par), d in geom["results"].items():
 # $\theta_g$ where the data wants it while $\tau$ grows, $z_g$ must shrink.
 # That is the inverted funnel, and it is why the advice reverses.
 #
-# ::: {.callout-note}
-# ## And yet non-centered is still the sensible default
+# <details class="sbi-note">
+# <summary>📝 <b>And yet non-centered is still the sensible default</b></summary>
+#
 # The inverted funnel is *suppressed by partial pooling itself* — the more
 # groups there are informing $\tau$, the more its bad end gets cut off.
 # Betancourt puts it sharply: **"the pathological behavior is the worst exactly
 # when the partial pooling is strongest."** So the reversal usually costs you
 # efficiency rather than correctness, which is why "non-center by default, and
 # reconsider when a group is data-rich" is reasonable advice.
-# :::
 #
-# ::: {.callout-warning}
-# ## Do not memorise the crossover point
+# </details>
+#
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>Do not memorise the crossover point</b></summary>
+#
 # This sweep holds the **number of groups fixed at 8** and varies only the
 # observations within each. The crossover also moves with the number of groups,
 # the group-scale prior, and how much the groups actually differ — so "the
@@ -470,7 +483,8 @@ for (scale, par), d in geom["results"].items():
 # What transfers is the *shape*: two curves that cross, and a rule for which
 # side you are on. Run the sweep on your own model rather than importing a
 # number from someone else's.
-# :::
+#
+# </details>
 
 # %% [markdown]
 # ## 5. Per-parameter parameterization in HSSM
@@ -528,8 +542,9 @@ for n in participant_nodes:
 # anything.
 
 # %% [markdown]
-# ::: {.callout-warning}
-# ## Two ways this bites
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>Two ways this bites</b></summary>
+#
 # **Non-centering only works for `Normal` priors whose `sigma` is itself a
 # random variable.** Anything else raises `NotImplementedError` when the model
 # is built — loud, at least.
@@ -541,7 +556,8 @@ for n in participant_nodes:
 # Always check `print(model)` / `model.graph()` after changing parameterization,
 # because term-prior keys differ between the two forms and a mismatched key is
 # **silently dropped**.
-# :::
+#
+# </details>
 
 # %% [markdown]
 # ### Exercise
@@ -570,7 +586,97 @@ for n in participant_nodes:
 # </details>
 
 # %% [markdown]
-# ## 6. Where this goes next
+# ## 6. The capstone: a slope per participant
+#
+# Section 1 gave every participant their own *drift*. Real designs ask for more
+# than that: drift usually **varies within a participant** with some
+# manipulation. So give every participant their own **slope** as well:
+#
+# $$v_{gi} \;=\; \beta^{(g)}_0 \;+\; \beta^{(g)}_1 \cdot \text{difficulty}_i,
+#   \qquad
+#   \beta^{(g)}_0, \beta^{(g)}_1 \sim \text{Normal}(\mu_\beta, \tau_\beta)$$
+#
+# Same brutal panel — trial counts from 5 to 600 — and difficulty varies
+# continuously from trial to trial.
+#
+# A slope is *harder* than an intercept. It needs enough trials **and** enough
+# spread in the covariate. With five trials you have neither.
+
+# %%
+reg = F.regression_experiment(seed=RANDOM_SEED)
+
+for name in ("intercept", "slope"):
+    s = F.pooling_summary(reg[name])
+    print(f"{name:10s} MAE  n<30: {s['no_pooling']['mae_low']:.3f} -> "
+          f"{s['partial_pooling']['mae_low']:.3f}"
+          f"   |  n>=30: {s['no_pooling']['mae_high']:.3f} -> "
+          f"{s['partial_pooling']['mae_high']:.3f}"
+          f"   |  {s['low_n_improvement_pct']:.0f}% better where thin")
+
+# %%
+F.fig_shrinkage(reg["slope"], ylabel=r"estimated slope $\beta_1$",
+                title=r"Shrinkage on the difficulty slope $\beta_1$")
+
+# %% [markdown]
+# Look at the left-hand side. Without pooling, a participant with a handful of
+# trials gets a slope of **2.9** where the truth is near 1.2, and another gets a
+# slope that is essentially **zero** — or negative — where the truth is 1.4.
+# Those are not estimates, they are noise with a credible interval attached.
+#
+# Partial pooling drags them back toward the population slope, which is the
+# best available guess for someone who has not given you enough data to say
+# otherwise. On the right-hand side, where participants *have* spoken for
+# themselves, the two methods agree and pooling changes nothing.
+#
+# <details class="sbi-note">
+# <summary>📝 <b>Why the slope gains more than the intercept</b></summary>
+#
+# The improvement where trials are thin is around **48%** for the intercept and
+# around **62%** for the slope. A slope is the harder quantity — it needs the
+# covariate to have moved *within* that participant — so it is the first thing
+# to fall apart when data is scarce, and the thing pooling rescues most.
+#
+# This is the practical argument for hierarchy in cognitive modelling. It is
+# rarely "we want a population estimate". It is "we want per-participant
+# estimates, and some of our participants are thin."
+#
+# </details>
+#
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>What pooling is not</b></summary>
+#
+# It does not manufacture information. The rescued slopes are **closer** to the
+# truth, not correct — look at how far the five-trial participants still sit
+# from their black crosses. Pooling buys you a defensible estimate where you
+# would otherwise have had a wild one; it does not buy you the experiment you
+# failed to run.
+#
+# </details>
+#
+# ### Exercise
+#
+# The panel fixes `a`, `z` and `t` so the comparison is about `v` alone. Give
+# the boundary `a` a per-participant random effect too, and predict — before
+# running it — whether pooling helps `a` more or less than it helped the slope.
+#
+# <details>
+# <summary>What to expect, and why</summary>
+#
+# Less pronounced in one sense and more in another. `a` is identified through
+# the *speed–accuracy relationship* rather than through trial count alone, so
+# adding trials helps it more slowly than it helps `v` — meaning even the
+# data-rich participants stay somewhat prior-dependent, and pooling keeps
+# earning its keep further to the right of the plot.
+#
+# That is the same observation as the per-parameter parameterization argument
+# in section 5: **different parameters are informed by different amounts of the
+# same data.** If you find `a` still shrinking hard at 600 trials, that is your
+# evidence that `a` wants a non-centered parameterization while `v` does not.
+#
+# </details>
+
+# %% [markdown]
+# ## 7. Where this goes next
 #
 # Centered and non-centered are the two endpoints of a continuum. **VIP**
 # (variationally inferred parametrization; Gorinova, Moore & Hoffman, ICML 2020)
@@ -590,14 +696,16 @@ for n in participant_nodes:
 # neither weak nor strong. It is available in PyMC as
 # `pymc_extras.model.transforms.autoreparam.vip_reparametrize`.
 #
-# ::: {.callout-note}
-# ## The experts disagree about how much this buys you
+# <details class="sbi-note">
+# <summary>📝 <b>The experts disagree about how much this buys you</b></summary>
+#
 # Betancourt's position is that "for any given likelihood function a
 # partially-centered parameterization may perform better … but in practice the
 # differences are usually negligible." Gorinova et al. measure a real if modest
 # improvement. Both can be true: **which groups** you center matters far more
 # than how precisely you center each one — which is the next section.
-# :::
+#
+# </details>
 #
 # ## What to take away
 #

@@ -365,8 +365,9 @@ for name, idata in [("1: flat", idata_flat),
         print(f"{name:24s} LOO FAILED: {type(exc).__name__}: {exc}")
 
 # %% [markdown]
-# ::: {.callout-warning}
-# ## Read the Pareto $k$ column before the elpd column
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>Read the Pareto <i>k</i> column before the elpd column</b></summary>
+#
 # LOO does not refit the model 1500 times; it *reweights* the existing draws,
 # and that shortcut only works when no single observation dominates the weights.
 # The Pareto $k$ diagnostic detects when it fails, and values above about 0.7
@@ -383,7 +384,8 @@ for name, idata in [("1: flat", idata_flat),
 # So: use LOO to separate *plausible* models from each other, and use posterior
 # predictive plots to reject the implausible ones. Do not ask LOO to rank a
 # model that the plots already told you is wrong.
-# :::
+#
+# </details>
 
 # %% [markdown]
 # ## 5. What actually generated the data
@@ -420,13 +422,15 @@ print(f"  t          {post['t'].values.mean():5.2f} +/- {post['t'].values.std():
 # - and the error rates are moderate, which we will discover in half an hour is
 #   not a small thing.
 #
-# ::: {.callout-warning}
-# ## The comparison found the right model. It could not have told you it was *correct*.
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>The comparison found the right model. It could not have told you it was <i>correct</i>.</b></summary>
+#
 # LOO ranks the candidates **you** proposed. If the true model is not among
 # them, comparison happily hands you the best of a bad set, with no hint that
 # anything is missing. That is what posterior predictive plots are for — they
 # compare a model against the *data*, not against its rivals. Use both.
-# :::
+#
+# </details>
 
 # %% [markdown]
 # ### Exercise
@@ -470,8 +474,9 @@ print(f"  t          {post['t'].values.mean():5.2f} +/- {post['t'].values.std():
 # %% [markdown]
 # ## What to take away
 #
-# ::: {.callout-tip}
-# ## The four things that matter
+# <details class="sbi-tip">
+# <summary>💡 <b>The four things that matter</b></summary>
+#
 #
 # 1. **A cognitive-model likelihood is just a distribution.**
 #    `from hssm.likelihoods import DDM`, then use it like `pm.Normal` — with
@@ -484,7 +489,8 @@ print(f"  t          {post['t'].values.mean():5.2f} +/- {post['t'].values.std():
 # 4. **Compare models with LOO, and check them against the data.** Comparison
 #    ranks your candidates; predictive checks tell you whether the whole set is
 #    wrong.
-# :::
+#
+# </details>
 #
 # ### Where this goes
 #

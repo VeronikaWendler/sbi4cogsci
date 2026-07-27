@@ -153,12 +153,17 @@ def pooling_experiment(**kwargs):
                       "partial_pooling": p_loo.get("partial")}}
 
 
-def fig_shrinkage(result, *, split_at=30, ax=None):
+def fig_shrinkage(result, *, split_at=30, ax=None, ylabel="estimated drift $v$",
+                  title="Shrinkage: who gets moved, and how far"):
     """Each participant as an arrow from its no-pooling to its partial-pooling
     estimate, against how many trials they contributed.
 
     The lesson is visual: participants with little data get pulled a long way
     toward the population; participants with a lot barely move.
+
+    Works on any result dict carrying `trial_counts`, `v_true`, `no_pooling` and
+    `partial_pooling` — which is why the regression capstone reuses it rather
+    than defining a second near-identical plot.
     """
     import matplotlib.pyplot as plt
 
@@ -179,8 +184,7 @@ def fig_shrinkage(result, *, split_at=30, ax=None):
             label="truth", zorder=5)
     ax.axvline(split_at, color=S.MUTED, ls=":", lw=1)
     ax.set(xscale="log", xlabel="trials contributed by this participant (log)",
-           ylabel="estimated drift $v$",
-           title="Shrinkage: who gets moved, and how far")
+           ylabel=ylabel, title=title)
     ax.legend(loc="lower right", fontsize=9, ncol=3)
     if fig is not None:
         fig.tight_layout()
@@ -207,6 +211,102 @@ def fig_pooling_error(result, *, split_at=30, ax=None):
     if fig is not None:
         fig.tight_layout()
     return fig if fig is not None else ax.figure
+
+
+# --------------------------------------------------------------------------
+# The capstone: a per-participant regression on a continuous covariate
+# --------------------------------------------------------------------------
+
+
+def simulate_regression_panel(trial_counts=DEFAULT_TRIAL_COUNTS,
+                              mu_b0=0.9, tau_b0=0.25,
+                              mu_b1=1.1, tau_b1=0.30,
+                              a=1.2, z=0.5, t=0.3, seed=0):
+    """An unbalanced panel where each participant has their own *slope*.
+
+    Drift varies within participant with a continuous difficulty covariate:
+
+        v_gi = b0_g + b1_g * difficulty_i,     b0_g, b1_g ~ Normal(mu, tau)
+
+    This is the realistic shape of a cognitive experiment, and it is harder
+    than estimating one drift per person: a slope needs both enough trials
+    *and* spread in the covariate.
+    """
+    from ssms.basic_simulators.simulator import simulator
+
+    rng = np.random.default_rng(seed)
+    counts = np.asarray(trial_counts, dtype=int)
+    b0_true = rng.normal(mu_b0, tau_b0, counts.size)
+    b1_true = rng.normal(mu_b1, tau_b1, counts.size)
+
+    obs, idx, diff = [], [], []
+    for g, n_g in enumerate(counts):
+        d = rng.uniform(-1.0, 1.0, int(n_g))
+        v = b0_true[g] + b1_true[g] * d
+        theta = np.column_stack([v, np.full(int(n_g), a),
+                                 np.full(int(n_g), z), np.full(int(n_g), t)])
+        # theta as a (n_trials, n_params) matrix with n_samples=1 is how
+        # ssm-simulators does trial-varying parameters.
+        out = simulator(theta=theta, model="ddm", n_samples=1, random_state=seed + g)
+        obs.append(np.column_stack([out["rts"].flatten(), out["choices"].flatten()]))
+        idx.append(np.full(int(n_g), g))
+        diff.append(d)
+
+    return {"observed": np.vstack(obs), "participant_idx": np.concatenate(idx),
+            "difficulty": np.concatenate(diff), "trial_counts": counts,
+            "b0_true": b0_true, "b1_true": b1_true}
+
+
+def fit_regression(panel, *, pooling, a=1.2, z=0.5, t=0.3,
+                   draws=1000, tune=1000, chains=4, seed=0):
+    """Fit per-participant intercept and slope, with or without pooling."""
+    import pymc as pm
+    from hssm.likelihoods import DDM
+
+    g_idx = panel["participant_idx"]
+    n_p = panel["trial_counts"].size
+    with pm.Model():
+        if pooling == "none":
+            b0 = pm.Normal("b0", 0.0, 2.0, shape=n_p)
+            b1 = pm.Normal("b1", 0.0, 2.0, shape=n_p)
+        elif pooling == "partial":
+            mu0 = pm.Normal("mu_b0", 0.0, 2.0)
+            tau0 = pm.HalfNormal("tau_b0", 1.0)
+            mu1 = pm.Normal("mu_b1", 0.0, 2.0)
+            tau1 = pm.HalfNormal("tau_b1", 1.0)
+            b0 = pm.Deterministic("b0", mu0 + tau0 * pm.Normal("z0", 0, 1, shape=n_p))
+            b1 = pm.Deterministic("b1", mu1 + tau1 * pm.Normal("z1", 0, 1, shape=n_p))
+        else:
+            raise ValueError("pooling must be 'none' or 'partial'")
+        v = b0[g_idx] + b1[g_idx] * panel["difficulty"]
+        DDM("obs", v=v, a=a, z=z, t=t, observed=panel["observed"])
+        idata = pm.sample(draws=draws, tune=tune, chains=chains, cores=1,
+                          nuts_sampler="pymc", progressbar=False, random_seed=seed)
+    return idata
+
+
+def regression_experiment(seed=0, **kwargs):
+    """The capstone comparison.
+
+    Returns two result dicts — one for the intercept, one for the slope — each
+    in the same shape `fig_shrinkage` / `fig_pooling_error` already understand.
+    """
+    panel = simulate_regression_panel(seed=seed, **kwargs)
+    n_p = panel["trial_counts"].size
+    est = {}
+    for pooling in ("none", "partial"):
+        idata = fit_regression(panel, pooling=pooling, seed=seed)
+        post = idata.posterior.dataset
+        est[pooling] = {k: post[k].values.reshape(-1, n_p).mean(0) for k in ("b0", "b1")}
+
+    def pack(key, truth):
+        return {"v_true": panel[truth], "trial_counts": panel["trial_counts"],
+                "no_pooling": est["none"][key],
+                "partial_pooling": est["partial"][key],
+                "n_trials_total": int(panel["trial_counts"].sum())}
+
+    return {"intercept": pack("b0", "b0_true"), "slope": pack("b1", "b1_true"),
+            "n_trials_total": int(panel["trial_counts"].sum())}
 
 
 # --------------------------------------------------------------------------

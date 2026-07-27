@@ -16,7 +16,8 @@
 #
 # **Day 3, 09:30 — 30 minutes.** Alexander Fengler.
 #
-# ![](../../images/logos/hssm-logo.png){width=300 fig-alt="HSSM logo"}
+# <img src="../../images/logos/hssm-logo.png" alt="HSSM logo"
+#      style="display:block; margin:0.5rem auto 1.5rem auto; width:240px">
 #
 # Yesterday at 12:00 you saw **bambi**: write `"y ~ 1 + x"`, and it builds the
 # PyMC model, chooses priors, fits, and predicts at new covariates. At 14:30
@@ -35,11 +36,13 @@
 # | where the likelihood comes from | closed form | closed form, a **neural approximation**, or your own function |
 # | built in | — | lapse process, SSM-specific fit checks |
 #
-# ::: {.callout-note}
-# ## Sections marked *optional* are reference material
+# <details class="sbi-note">
+# <summary>📝 <b>Sections marked <i>optional</i> are reference material</b></summary>
+#
 # The live path is sections 1-5. Sections 6-8 exist so you have working code to
 # come back to.
-# :::
+#
+# </details>
 
 # %%
 import sys, pathlib, warnings
@@ -128,8 +131,9 @@ print(data.head().to_string(index=False))
 print(f"\n{len(data)} trials | error rate {(data['response'] == -1).mean():.1%}")
 
 # %% [markdown]
-# ::: {.callout-important}
-# ## Response coding in HSSM is `-1` / `+1`
+# <details class="sbi-key" open>
+# <summary>🔑 <b>Response coding in HSSM is <code>-1</code> / <code>+1</code></b></summary>
+#
 # Two-choice models expect responses coded `-1` and `+1`. You never have to
 # guess this — every model declares it:
 #
@@ -139,7 +143,8 @@ print(f"\n{len(data)} trials | error rate {(data['response'] == -1).mean():.1%}"
 #
 # Multi-alternative models use `[0 … K-1]` instead, and declare that the same
 # way. Check the config rather than assuming.
-# :::
+#
+# </details>
 
 # %%
 from ssms.config import model_config
@@ -241,15 +246,17 @@ fig.tight_layout()
 # off zero everywhere, so no single trial can contribute an unboundedly large
 # negative log-likelihood.
 #
-# ::: {.callout-warning}
-# ## What the lapse process is, and is not
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>What the lapse process is, and is not</b></summary>
+#
 # It is a **robustifying floor**, not a generative model of lapses. Two things
 # follow. First, the lapse density in HSSM depends only on the RT and ignores
 # the choice, so over the joint (rt, choice) space the implemented mixture does
 # not integrate to one. Second, `p_outlier` is fixed by default rather than
 # estimated — it is a modelling assumption you are making, so **report it**.
 # Turn it off with `p_outlier=None` when you want the pure SSM.
-# :::
+#
+# </details>
 
 # %% [markdown]
 # ## 4. Fit checks that are specific to SSMs
@@ -320,13 +327,15 @@ plt.tight_layout()
 # ellipses sit on the observed points. And the recovered coefficients match the
 # values we generated with.
 #
-# ::: {.callout-tip}
-# ## This is the whole argument for HSSM
+# <details class="sbi-tip">
+# <summary>💡 <b>This is the whole argument for HSSM</b></summary>
+#
 # `include=[{"name": "v", "formula": "v ~ 1 + theta"}]` replaced the
 # `v[coh_idx]` indexing you wrote by hand yesterday — and it extends to random
 # effects, multiple parameters, and link functions without you writing any of
 # it.
-# :::
+#
+# </details>
 
 # %% [markdown]
 # ### Exercise
@@ -566,8 +575,9 @@ print(f"predicted P(+1)   {(pp[..., 1] > 0).mean():.3f} "
 # workflow.approximator.save("ddm_nle.keras")     # ~4 MB, reloads in under a second
 # ```
 #
-# ::: {.callout-warning}
-# ## Three traps on this route, all silent
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>Three traps on this route, all silent</b></summary>
+#
 # **Use `approximator.inference_network.log_prob`, not
 # `approximator.log_prob`.** The latter is the documented user-facing call and
 # is *not* JAX-traceable — it converts to numpy internally and dies under
@@ -580,13 +590,15 @@ print(f"predicted P(+1)   {(pp[..., 1] > 0).mean():.3f} "
 # **The training box is the validity region.** Outside it the network
 # extrapolates and returns confident nonsense. Set `bounds` in the `ModelConfig`
 # to the box you trained on, and keep priors inside it.
-# :::
+#
+# </details>
 
 # %% [markdown]
 # ## What to take away
 #
-# ::: {.callout-tip}
-# ## The five things that matter
+# <details class="sbi-tip">
+# <summary>💡 <b>The five things that matter</b></summary>
+#
 #
 # 1. **HSSM is bambi for cognitive models.** A formula per *SSM parameter*,
 #    instead of `v[coh_idx]` by hand.
@@ -598,7 +610,8 @@ print(f"predicted P(+1)   {(pp[..., 1] > 0).mean():.3f} "
 #    model cartoon — not just traces.
 # 5. **Any JAX function can be the likelihood.** Attach an `rv=` too, or you
 #    lose posterior predictive sampling.
-# :::
+#
+# </details>
 #
 # ### Quick reference
 #

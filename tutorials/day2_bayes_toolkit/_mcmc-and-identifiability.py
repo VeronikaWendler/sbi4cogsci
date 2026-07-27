@@ -66,14 +66,16 @@ print("pymc", pm.__version__, "| arviz", az.__version__)
 # \mathbb{E}_{\pi}[f] \;\approx\; \frac{1}{N} \sum_{i=1}^{N} f\!\left(\theta^{(i)}\right).
 # $$
 #
-# ::: {.callout-note}
-# ## $\pi$ does not have to be a posterior
+# <details class="sbi-note">
+# <summary>📝 <b><i>&pi;</i> does not have to be a posterior</b></summary>
+#
 # Nothing above mentions Bayes. MCMC is a general recipe for sampling from *any*
 # distribution you can evaluate up to a constant — it is used in statistical
 # physics, combinatorial optimisation and rendering. We happen to point it at
 # posteriors, and for the first examples below $\pi$ will just be a distribution
 # we picked because we know the right answer.
-# :::
+#
+# </details>
 #
 # ### The normalizing constant, and why we can ignore it
 #
@@ -218,12 +220,14 @@ for s in [0.05, 0.5, 1.5, 5.0, 20.0]:
 print(pd.DataFrame(rows).to_string(index=False, float_format=lambda v: f"{v:9.3f}"))
 
 # %% [markdown]
-# ::: {.callout-important}
-# ## Acceptance rate is not a measure of quality
+# <details class="sbi-key" open>
+# <summary>🔑 <b>Acceptance rate is not a measure of quality</b></summary>
+#
 # The smallest step size has by far the **highest** acceptance rate and among
 # the **worst** ESS — it accepts everything because it proposes almost nothing.
 # Judge a sampler by effective sample size, never by how often it says yes.
-# :::
+#
+# </details>
 #
 # This is also why gradient-based samplers exist. NUTS does not guess a
 # direction and hope; it uses $\nabla \log \tilde{\pi}$ to move along the
@@ -347,8 +351,9 @@ print(pd.DataFrame(tab).to_string(index=False, float_format=lambda v: f"{v:8.3f}
 print(f"\ntrue v in the extreme design: {TRUE['v_extreme']}")
 
 # %% [markdown]
-# ::: {.callout-important}
-# ## High accuracy is bad data for parameter estimation
+# <details class="sbi-key" open>
+# <summary>🔑 <b>High accuracy is bad data for parameter estimation</b></summary>
+#
 # This is the counterintuitive headline. Compare the two rows above: the
 # near-perfect dataset gives posteriors several times wider on every parameter,
 # lying along a ridge rather than filling a blob. Nothing is wrong with the
@@ -366,7 +371,8 @@ print(f"\ntrue v in the extreme design: {TRUE['v_extreme']}")
 # rates between **15% and 35%**. Below that, parameters stop being separately
 # identifiable — and collecting more trials does not rescue a design with no
 # errors in it.
-# :::
+#
+# </details>
 #
 # ### Exercise
 #
@@ -393,8 +399,9 @@ print(f"\ntrue v in the extreme design: {TRUE['v_extreme']}")
 # %% [markdown]
 # ## What to take away
 #
-# ::: {.callout-tip}
-# ## The four things that matter
+# <details class="sbi-tip">
+# <summary>💡 <b>The four things that matter</b></summary>
+#
 #
 # 1. **MCMC turns integrals into averages.** You cannot integrate $\pi$, so you
 #    sample from it and average.
@@ -405,7 +412,8 @@ print(f"\ntrue v in the extreme design: {TRUE['v_extreme']}")
 #    everything and explores nearly nothing. Judge by ESS.
 # 4. **Some posteriors are hard because of the data, not the sampler.** A
 #    near-degenerate ridge is the experiment's fault, and no sampler fixes it.
-# :::
+#
+# </details>
 #
 # ### Quick reference
 #

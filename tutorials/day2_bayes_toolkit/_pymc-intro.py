@@ -17,7 +17,8 @@
 #
 # **Day 2, 12:00 — 60 minutes.** Alexander Fengler.
 #
-# ![](../../images/logos/pymc-logo.png){width=320 fig-alt="PyMC logo"}
+# <img src="../../images/logos/pymc-logo.png" alt="PyMC logo"
+#      style="display:block; margin:0.5rem auto 1.5rem auto; width:240px">
 #
 # PyMC lets you write a generative model in Python and get a posterior back.
 # This session builds that from the bottom: what a distribution object *is*,
@@ -102,15 +103,18 @@ print("pymc", pm.__version__, "| arviz", az.__version__, "| bambi", bmb.__versio
 # **NumPyro** and **Pyro** (on JAX and PyTorch), **Turing.jl** (Julia). The
 # concepts transfer directly; the syntax does not.
 #
-# ::: {.callout-tip}
-# ## The one sentence to keep
+# <details class="sbi-tip" open>
+# <summary>💡 <b>The one sentence to keep</b></summary>
+#
 # You describe the *generative story*; the library turns it into a
 # differentiable graph and samples the posterior for you.
-# :::
+#
+# </details>
 
 # %% [markdown]
-# ::: {.callout-warning}
-# ## Read this before you copy code off the internet
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>Read this before you copy code off the internet</b></summary>
+#
 # **ArviZ 1.0 (May 2026) was a breaking release.** `az.plot_posterior`,
 # `az.plot_ppc`, `az.plot_density`, `az.plot_kde` and `az.waic` **no longer
 # exist**. `az.plot_trace` still exists but now draws *traces only*. The default
@@ -121,7 +125,8 @@ print("pymc", pm.__version__, "| arviz", az.__version__, "| bambi", bmb.__versio
 # gallery — predate this. If a snippet errors with `AttributeError` on an
 # `az.plot_*` function, that is why. The pinned `tutorials/uv.lock` guarantees
 # you are on the versions this notebook was written against.
-# :::
+#
+# </details>
 
 # %%
 print("az.plot_posterior exists?", hasattr(az, "plot_posterior"))
@@ -272,22 +277,26 @@ except Exception as exc:                      # graphviz needs the `dot` BINARY
 graph
 
 # %% [markdown]
-# ::: {.callout-note}
-# ## If that cell printed text instead of a picture
+# <details class="sbi-note">
+# <summary>📝 <b>If that cell printed text instead of a picture</b></summary>
+#
 # `model_to_graphviz` needs the **`dot` system binary**, not just the Python
 # `graphviz` package — `brew install graphviz` / `apt install graphviz` /
 # `conda install graphviz`. PyMC 6 also ships `pm.model_to_mermaid()`, which is
 # pure text and always available, which is what the fallback prints.
-# :::
+#
+# </details>
 
 # %% [markdown]
-# ::: {.callout-important}
-# ## `pm.sample()` returns an `xarray.DataTree`
+# <details class="sbi-key" open>
+# <summary>🔑 <b><code>pm.sample()</code> returns an <code>xarray.DataTree</code></b></summary>
+#
 # In PyMC 6 this is **not** an `arviz.InferenceData` any more. `InferenceData`
 # still exists as a compatibility shim that warns and hands you a `DataTree`.
 # The API docstring on the website still says "InferenceData" — the code
 # disagrees, and the code wins.
-# :::
+#
+# </details>
 #
 # A `DataTree` is a tree of labelled groups. Look at what is in it:
 
@@ -319,6 +328,51 @@ print("posterior mean mu = %.3f   (true %.1f)" % (post["mu"].values.mean(), TRUE
 print("posterior mean sigma = %.3f (true %.1f)" % (post["sigma"].values.mean(), TRUE_SIGMA))
 
 # %% [markdown]
+# ### What you get once you are on the `Dataset`
+#
+# It is worth being concrete about *why* that reach-through matters, because
+# "use xarray" is advice people nod at and then ignore. The payoff is that the
+# array carries its **dimension names** — `chain`, `draw` — so you stop writing
+# `axis=0` and start writing what you mean.
+
+# %%
+# 1. REDUCE BY NAME. No axis numbers, and it applies to every variable at once.
+print(post.mean(dim=["chain", "draw"]))
+
+# %%
+# 2. SELECT BY LABEL. `sel` uses coordinate values, `isel` uses positions.
+#    "chain 2, last five draws" is one expression rather than a slice puzzle.
+print("chain 2, last 5 draws of mu:",
+      post["mu"].sel(chain=2).isel(draw=slice(-5, None)).values.round(3))
+
+# Per-chain means — the manual version of the check R-hat automates for you.
+print("\nmean of mu within each chain:")
+print(post["mu"].mean(dim="draw").to_series().round(3).to_string())
+
+# %%
+# 3. DERIVED QUANTITIES ARE FREE, and stay labelled. Any function of the
+#    parameters has a posterior too, and you get it by transforming the draws --
+#    no re-fitting, no delta method, no reshaping.
+derived = post.assign(
+    cv=post["sigma"] / post["mu"],            # coefficient of variation
+    z_score=(3.0 - post["mu"]) / post["sigma"],  # how extreme is y = 3?
+)
+print(az.summary(derived, var_names=["cv", "z_score"], kind="stats").to_string())
+
+# %%
+# 4. QUANTILES ALONG NAMED DIMS. `az.summary` is the convenient path, but the
+#    raw xarray call is there when you want something it does not offer.
+print(post.quantile([0.055, 0.5, 0.945], dim=["chain", "draw"])
+          .to_dataframe().round(3).to_string())
+
+# %% [markdown]
+# Point 3 is the one to remember. The posterior over $\sigma/\mu$ was never
+# something we asked the sampler for — we pushed the draws through a function
+# and read off the answer. **Any** quantity you can compute from the parameters
+# has a posterior, and this is how you get it. That is a genuine advantage of
+# sampling over optimisation, where propagating uncertainty through a nonlinear
+# transform is real work.
+#
 # The `sample_stats` group is where the sampler records what it did. This is
 # where divergences live — we will make use of it during out Day 3 tutorials.
 
@@ -343,9 +397,28 @@ print(az.summary(idata, kind="stats", ci_prob=0.94, ci_kind="hdi").to_string())
 # on the right.
 
 # %%
-az.plot_trace_dist(idata, combined=True)
-plt.gcf().set_size_inches(9, 4)
+trace = az.plot_trace_dist(idata, combined=True)
+plt.gcf().set_size_inches(9, 4.4)
+
+# ArviZ 1.x returns a PlotCollection rather than an array of Axes. `get_target`
+# takes the variable and the panel's coordinates and hands back the Axes, which
+# is how we draw anything ArviZ does not — here, the values we generated from.
+# The marginal panel wants a VERTICAL truth line (the x axis is the parameter);
+# the trace panel wants a HORIZONTAL one (the y axis is the parameter).
+for var, truth in [("mu", TRUE_MU), ("sigma", TRUE_SIGMA)]:
+    S.truth_line(trace.get_target(var, {"column": "dist"}), truth, axis="x")
+    S.truth_line(trace.get_target(var, {"column": "trace"}), truth, axis="y")
+
 plt.tight_layout()
+
+# %% [markdown]
+# Two panels, two different questions, and the truth line answers both.
+#
+# On the **left** it tells you whether the posterior actually covers the value
+# that generated the data. On the **right** it tells you whether the chains are
+# wandering *around* that value rather than drifting toward it — a trace that
+# approaches the truth from one side and keeps going is a chain that has not
+# converged, and it looks completely healthy if you plot it without the line.
 
 # %% [markdown]
 # And the joint, which we will care about a great deal this afternoon.
@@ -368,15 +441,17 @@ plt.gcf().suptitle("Joint posterior, truth marked", y=1.02)
 plt.tight_layout()
 
 # %% [markdown]
-# ::: {.callout-note}
-# ## Marking ground truth is a habit worth forming
+# <details class="sbi-note">
+# <summary>📝 <b>Marking ground truth is a habit worth forming</b></summary>
+#
 # ArviZ has no "true value" argument, because in real analyses there is no true
 # value to pass — you only have this when you generated the data yourself. That
 # is exactly why it is worth doing whenever you *can*: a plot with the truth on
 # it answers "did this work?" in one glance, and simulating data with known
 # parameters is the cheapest way to check a model before trusting it on real
 # data. We use the same trick throughout Day 2 and Day 3.
-# :::
+#
+# </details>
 #
 # `mu` and `sigma` are close to independent here — a round blob, and the truth
 # sits inside it. Remember what this looks like; by 15:00 today you will be
@@ -475,14 +550,16 @@ fig.tight_layout()
 # wide range — that is the `Normal(0, 10)` prior on `mu` talking. Afterwards it
 # predicts data that look like what we actually observed.
 #
-# ::: {.callout-tip}
-# ## These are two different checks, and both are worth running
+# <details class="sbi-tip">
+# <summary>💡 <b>These are two different checks, and both are worth running</b></summary>
+#
 # The **prior predictive** is checked *before* fitting and asks "is my model
 # capable of producing data like mine at all?" The **posterior predictive** is
 # checked *after* and asks "having fitted, can it reproduce what I saw?" A model
 # can pass the second and still have had an absurd prior — which is why the
 # first is not optional.
-# :::
+#
+# </details>
 
 # %% [markdown]
 # ### Exercise 1
@@ -669,40 +746,129 @@ ax.legend()                   # Add legend
 fig.tight_layout()            # Format the layout tightly for clarity
 
 # %% [markdown]
-# ### The same picture, via `sample_posterior_predictive`
+# ### Two bands that are *not* the same thing
 #
 # The plot above was assembled by hand: pull draws, multiply them out, draw
-# lines. That is useful once, because it shows there is no magic. But PyMC will
-# generate predictions for you, and it accounts for the observation noise
-# `sigma` as well as uncertainty in the coefficients — which the lines do not.
+# lines. PyMC will do predictions for you with
+# `sample_posterior_predictive` — but what it gives back answers a **different
+# question**, and the two get conflated constantly. Name them properly:
+#
+# | | what it is | what it contains |
+# |---|---|---|
+# | **mean band** | uncertainty about $\mu(x) = \beta_0 + \beta_1 x$ — *where the line is* | uncertainty in the coefficients only |
+# | **response band** | uncertainty about a *new observation* $y^{\text{new}}$ at $x$ | the coefficients **plus** the scatter $\sigma$ around the line |
+#
+# In one equation, the widths differ by exactly one term:
+#
+# $$
+# \operatorname{Var}\!\left(y^{\text{new}} \mid x\right)
+# \;=\; \underbrace{\operatorname{Var}(\mu(x))}_{\text{mean band}}
+# \;+\; \underbrace{\sigma^2}_{\text{observation noise}} .
+# $$
+#
+# The regression lines you just drew are the **mean** band. What
+# `sample_posterior_predictive` returns is the **response** band. Let us compute
+# both and put them on the same axes, because the comparison is the lesson.
 
 # %%
+# MEAN band: push the coefficient draws through the line. No noise anywhere.
+ic_all = post_p["Intercept"].values.ravel()
+sl_all = post_p["x"].values.ravel()
+mu_draws = ic_all[:, None] + sl_all[:, None] * xs[None, :]      # (draws, grid)
+mu_lo, mu_mid, mu_hi = np.percentile(mu_draws, [5.5, 50, 94.5], axis=0)
+
+# RESPONSE band: PyMC draws actual y values, so sigma is baked in. Note it
+# predicts at the x values the model was BUILT with, not on our grid.
 with regression:
     ppc_reg = pm.sample_posterior_predictive(idata_pymc, random_seed=RANDOM_SEED,
                                              progressbar=False)
 
-y_pred = ppc_reg["posterior_predictive"].dataset["y"].values  # (chain, draw, obs)
+y_pred = ppc_reg["posterior_predictive"].dataset["y"].values   # (chain, draw, obs)
 y_pred = y_pred.reshape(-1, y_pred.shape[-1])
 lo, mid, hi = np.percentile(y_pred, [5.5, 50, 94.5], axis=0)
-
 order = np.argsort(x)
-fig, ax = plt.subplots(figsize=(6.5, 4))
-ax.fill_between(x[order], lo[order], hi[order], color=S.PRIMARY, alpha=0.20,
-                label="89% posterior predictive")
-ax.plot(x[order], mid[order], color=S.PRIMARY, lw=2, label="predictive median")
+
+fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
+
+# Left: the mean band on its own, where the hourglass is visible.
+ax = axes[0]
+ax.fill_between(xs, mu_lo, mu_hi, color=S.PRIMARY, alpha=0.35,
+                label="89% band for the MEAN")
+ax.plot(xs, mu_mid, color=S.PRIMARY, lw=2)
 ax.plot(x, y, "o", color=S.MUTED, ms=4, ls="none", label="data", zorder=3)
-ax.set(title="Posterior predictive, done by PyMC", xlabel="$x$", ylabel="$y$")
-ax.legend()
+ax.set(title="Where is the line?", xlabel="$x$", ylabel="$y$")
+ax.legend(fontsize=9, loc="upper left")
+
+# Right: both, to scale.
+ax = axes[1]
+ax.fill_between(x[order], lo[order], hi[order], color=S.ALT, alpha=0.25,
+                label="89% band for a NEW OBSERVATION")
+ax.fill_between(xs, mu_lo, mu_hi, color=S.PRIMARY, alpha=0.55,
+                label="89% band for the MEAN")
+ax.plot(x, y, "o", color=S.MUTED, ms=4, ls="none", label="data", zorder=3)
+ax.set(title="...versus where is the next data point?", xlabel="$x$")
+ax.legend(fontsize=9, loc="upper left")
 fig.tight_layout()
 
 # %% [markdown]
-# ::: {.callout-important}
-# ## Two different bands, and people mix them up
-# The **regression lines** above show uncertainty in the *mean* — where the line
-# is. This band shows uncertainty in a *future observation*, which also includes
-# the scatter $\sigma$ around the line. The second is always wider, and it is
-# the one to use when the question is "what value would I see next?"
-# :::
+# ### Why the wide band looks like it has constant width
+#
+# It is worth checking that suspicion with numbers rather than eyes. The mean
+# band is narrowest at the centre of the $x$ range and flares at the extremes —
+# the classic hourglass, because tilting the line about its centre moves the
+# ends far more than the middle. The response band inherits that same hourglass,
+# but adds $\sigma^2$ to the variance, and here $\sigma \approx 0.8$ **dwarfs**
+# the coefficient uncertainty. So it is not flat — it is an hourglass swamped by
+# a constant.
+
+# %%
+centre = np.argmin(np.abs(xs))                 # grid point nearest x = 0
+edge = -1                                      # the largest x
+
+mean_w = mu_hi - mu_lo
+resp_w = (hi - lo)[order]
+x_sorted = x[order]
+
+print(f"{'':22s} {'at x ~ 0':>10s} {'at x = max':>12s} {'ratio':>8s}")
+print(f"{'mean band width':22s} {mean_w[centre]:10.3f} {mean_w[edge]:12.3f}"
+      f" {mean_w[edge] / mean_w[centre]:8.2f}")
+print(f"{'response band width':22s} {resp_w[len(resp_w)//2]:10.3f} {resp_w[edge]:12.3f}"
+      f" {resp_w[edge] / resp_w[len(resp_w)//2]:8.2f}")
+
+# The variance decomposition that explains the ratio.
+sd_mu_centre = mu_draws[:, centre].std()
+sigma_hat = post_p["sigma"].values.mean()
+print(f"\nat x ~ 0:  sd of the mean = {sd_mu_centre:.3f},  sigma = {sigma_hat:.3f}")
+print(f"           total sd = sqrt({sd_mu_centre:.3f}^2 + {sigma_hat:.3f}^2) = "
+      f"{np.sqrt(sd_mu_centre**2 + sigma_hat**2):.3f}")
+print(f"           -> the noise contributes "
+      f"{sigma_hat**2 / (sd_mu_centre**2 + sigma_hat**2):.1%} of the variance")
+
+# %% [markdown]
+# There it is. The mean band genuinely does flare toward the edges. The response
+# band flares by the same *absolute* amount, but that amount is small next to
+# $\sigma$, so as a *fraction* of its own width it barely changes — which is why
+# it reads as a constant-width ribbon.
+#
+# This ratio is not a fixed fact about regression, it is a fact about **this**
+# dataset. With 120 points the mean is pinned down tightly; with 8 points the
+# hourglass would be plainly visible in the response band too. Worth trying.
+
+# %% [markdown]
+# <details class="sbi-key" open>
+# <summary>🔑 <b>Ask which band you actually want</b></summary>
+#
+# "Where is the effect?" is a question about the **mean** — use the narrow band.
+# "What value would I see on the next trial?" is a question about a **new
+# observation** — use the wide one. Reporting the mean band as though it were a
+# prediction interval is a common and consequential error: it makes a model look
+# far more certain about future data than it is.
+#
+# Neither is "the" posterior predictive, so the phrase alone is ambiguous. Say
+# which one you mean, and check what your library returns by default — most
+# `predict` functions give you the response band, but not all of them do.
+#
+# </details>
 #
 # One limitation is worth noticing now, because it sets up the next section.
 # `sample_posterior_predictive` predicts at the $x$ values the model was
@@ -767,9 +933,26 @@ print("\n(Small differences are Monte Carlo noise plus bambi's data-scaled prior
 # *after* the fit — and in particular, prediction at covariate values the model
 # never saw, which took extra planning in raw PyMC.
 
+# %% [markdown]
+# **bambi names the two bands in its API**, which is genuinely helpful — the
+# distinction we just had to construct by hand is a keyword argument here:
+#
+# | `kind=` | what you get | which band |
+# |---|---|---|
+# | `"response_params"` *(default)* | `posterior["mu"]` — the linear predictor | the **mean** band |
+# | `"response"` | `posterior_predictive["y"]` — simulated observations | the **response** band |
+#
+# Note the default is `"response_params"`. Ask for `"response"` when you want
+# what `pm.sample_posterior_predictive` gives you.
+
 # %%
-# Posterior predictive at the observed data: one argument.
-model_bmb.predict(idata_bmb, kind="response", inplace=True)
+# Both kinds, one line each.
+model_bmb.predict(idata_bmb, kind="response_params", inplace=True)  # -> posterior["mu"]
+model_bmb.predict(idata_bmb, kind="response", inplace=True)         # -> posterior_predictive["y"]
+
+mu_b = idata_bmb["posterior"].dataset["mu"].values
+mu_b = mu_b.reshape(-1, mu_b.shape[-1])
+mu_lo_b, mu_hi_b = np.percentile(mu_b, [5.5, 94.5], axis=0)
 
 pp = idata_bmb["posterior_predictive"].dataset["y"].values
 pp = pp.reshape(-1, pp.shape[-1])
@@ -778,15 +961,33 @@ lo_b, mid_b, hi_b = np.percentile(pp, [5.5, 50, 94.5], axis=0)
 order = np.argsort(data["x"].to_numpy())
 xo = data["x"].to_numpy()[order]
 
-fig, ax = plt.subplots(figsize=(6.5, 4))
-ax.fill_between(xo, lo_b[order], hi_b[order], color=S.ALT, alpha=0.22,
-                label="89% posterior predictive (bambi)")
-ax.plot(xo, mid_b[order], color=S.ALT, lw=2, label="predictive median")
+fig, ax = plt.subplots(figsize=(7, 4))
+ax.fill_between(xo, lo_b[order], hi_b[order], color=S.ALT, alpha=0.25,
+                label='kind="response" — a new observation')
+ax.fill_between(xo, mu_lo_b[order], mu_hi_b[order], color=S.PRIMARY, alpha=0.55,
+                label='kind="response_params" — the mean')
 ax.plot(data["x"], data["y"], "o", color=S.MUTED, ms=4, ls="none",
         label="data", zorder=3)
-ax.set(title="bambi: posterior predictive in one call", xlabel="$x$", ylabel="$y$")
-ax.legend()
+ax.set(title="bambi: both bands, one keyword apart", xlabel="$x$", ylabel="$y$")
+ax.legend(fontsize=9, loc="upper left")
 fig.tight_layout()
+
+# %% [markdown]
+# ### These really are the same computation
+#
+# It is fair to be suspicious that bambi is doing something subtly different
+# from the PyMC call. It is not — so check rather than trust. Line up bambi's
+# response band against the one `pm.sample_posterior_predictive` produced for
+# the hand-written model, on the same $x$ values:
+
+# %%
+band_gap = np.abs((hi_b - lo_b)[order] - (hi - lo)[order])
+print(f"largest disagreement between the two 89% response bands: {band_gap.max():.3f}")
+print(f"as a fraction of the band width:                         "
+      f"{band_gap.max() / (hi - lo)[order].mean():.1%}")
+print("\n(Both are simulating y ~ Normal(b0 + b1*x, sigma) from the posterior "
+      "draws.\n Any gap is Monte Carlo noise plus bambi's data-scaled priors, "
+      "not a\n different definition.)")
 
 # %% [markdown]
 # And now the part that mattered: **predicting out of sample.** Hand `predict` a
@@ -815,13 +1016,15 @@ ax.legend(fontsize=9)
 fig.tight_layout()
 
 # %% [markdown]
-# ::: {.callout-tip}
-# ## This is the argument for bambi in one picture
+# <details class="sbi-tip">
+# <summary>💡 <b>This is the argument for bambi in one picture</b></summary>
+#
 # `model.predict(idata, data=new_x)` — that is the whole out-of-sample story.
 # For any model whose structure bambi can express, you get prediction,
 # marginalisation over covariates, and the `bmb.interpret` tools (predictions,
 # comparisons, slopes) without writing them.
-# :::
+#
+# </details>
 #
 # Note the band widens outside the shaded region. The model is extrapolating,
 # and it says so. It is still *only* honest about the uncertainty it knows
@@ -899,15 +1102,64 @@ with pm.Model() as chain:
     x_var = pm.Normal("x_var", mu=z, sigma=0.5)
     pm.Normal("y_var", mu=x_var, sigma=0.5)
 
-# (a) OBSERVE x = 2  -> evidence flows backwards, z updates
-observed = pm.observe(chain, {chain["x_var"]: 2.0})
+# Both functions return a NEW model; `chain` itself is untouched.
+observed = pm.observe(chain, {chain["x_var"]: 2.0})    # condition
+intervened = pm.do(chain, {chain["x_var"]: 2.0})       # intervene
+
+# %% [markdown]
+# ### Look at what each one did to the graph
+#
+# This is the clearest way to see the difference, and it is structural rather
+# than statistical — you can read the answer off the picture before running a
+# single sampler.
+
+# %%
+from IPython.display import HTML, display
+
+
+def _graph_svg(model):
+    return pm.model_to_graphviz(model).pipe(format="svg").decode()
+
+
+try:
+    display(HTML(
+        '<div style="display:flex; gap:3rem; align-items:flex-start; '
+        'flex-wrap:wrap">'
+        f'<div><b>original model</b><br>{_graph_svg(chain)}</div>'
+        f'<div><b>pm.observe(x_var = 2)</b><br>{_graph_svg(observed)}</div>'
+        f'<div><b>pm.do(x_var = 2)</b><br>{_graph_svg(intervened)}</div>'
+        '</div>'))
+except Exception as exc:                      # graphviz needs the `dot` BINARY
+    print(f"graphviz unavailable ({type(exc).__name__}); mermaid instead\n")
+    for name, m in [("ORIGINAL", chain), ("OBSERVE", observed), ("DO", intervened)]:
+        print(f"--- {name} ---")
+        print(pm.model_to_mermaid(m), "\n")
+
+# %% [markdown]
+# Read the three graphs left to right:
+#
+# - **Original.** `z → x_var → y_var`, all three open (unobserved).
+# - **`pm.observe`.** `x_var` is now **shaded** — it is data. But the arrow
+#   `z → x_var` is **still there**. That edge is the channel evidence travels
+#   along, and it runs in both directions: knowing `x_var` tells you about `z`.
+# - **`pm.do`.** `x_var` is no longer a random variable at all; it has become a
+#   constant, and **the arrow from `z` is gone**. `z` is now disconnected from
+#   everything downstream.
+#
+# That missing arrow is the entire content of the do-operator. Once it is cut,
+# no amount of sampling can send information from `x_var` back to `z` — not
+# because we told it not to, but because there is no path.
+#
+# Now confirm that the graphs predicted the numbers:
+
+# %%
+# (a) OBSERVE x = 2  -> evidence flows backwards along the surviving edge
 with observed:
     idata_obs = pm.sample(draws=1000, tune=1000, chains=2, cores=1,
                           nuts_sampler="pymc", progressbar=False,
                           random_seed=RANDOM_SEED)
 
-# (b) DO x = 2  -> the z -> x arrow is cut, z keeps its prior
-intervened = pm.do(chain, {chain["x_var"]: 2.0})
+# (b) DO x = 2  -> the z -> x arrow is cut, so z keeps its prior
 with intervened:
     idata_do = pm.sample_prior_predictive(draws=2000, random_seed=RANDOM_SEED)
 
@@ -934,20 +1186,22 @@ fig.tight_layout()
 # reaching in and setting $x$ — destroys that inferential link, because the
 # value no longer came from $z$. $z$ keeps its prior.
 #
-# ::: {.callout-note}
-# ## Why a modelling library has this at all
+# <details class="sbi-note">
+# <summary>📝 <b>Why a modelling library has this at all</b></summary>
+#
 # Once you can express interventions, a fitted model can answer "what would
 # happen if we *changed* this?" rather than only "what tends to go with what?".
 # `pm.do` and `pm.observe` return **new models**, leaving the original
 # untouched, so you can ask several such questions off one fit. HSSM exposes the
 # same idea as `model.sample_do(...)` — you will see it on Day 3.
-# :::
+#
+# </details>
 
 # %% [markdown]
 # ## What to take away
 #
-# ::: {.callout-tip}
-# ## The five things that matter
+# <details class="sbi-tip" open>
+# <summary>💡 <b>The five things that matter</b></summary>
 #
 # 1. **A distribution is used two ways.** `pm.Normal.dist(...)` is a value you
 #    can draw from and take `logp` of. `pm.Normal("name", ...)` inside a model
@@ -956,13 +1210,15 @@ fig.tight_layout()
 #    compiles it — the same machinery as a deep learning framework, aimed at a
 #    posterior instead of a loss.
 # 3. **`pm.sample()` returns an `xarray.DataTree`.** `idata.posterior` is a tree
-#    *node*; reach through `.dataset` when you want Dataset behaviour.
+#    *node*; reach through `.dataset` when you want Dataset behaviour — and then
+#    every `xarray` reduction, selection and derived quantity is available to you.
 # 4. **Look at the joint, not just the marginals**, and mark ground truth
 #    whenever you have it.
 # 5. **Prior → posterior and prior predictive → posterior predictive** are the
 #    two pictures that show what conditioning did, in parameter space and in
-#    data space.
-# :::
+#    data space. Know which uncertainty each band carries.
+#
+# </details>
 #
 # ### Quick reference
 #
@@ -981,12 +1237,14 @@ fig.tight_layout()
 # | the same, as a formula | `bmb.Model("y ~ 1 + x", data).fit()` |
 # | predict at new covariates | `bmb_model.predict(idata, data=new_df)` |
 #
-# ::: {.callout-warning}
-# ## Remember the version trap
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>Remember the version trap</b></summary>
+#
 # `az.plot_posterior`, `az.plot_ppc`, `az.plot_density`, `az.plot_kde` and
 # `az.waic` no longer exist, and the default interval is an **89% ETI**. Almost
 # everything you find by searching predates that change.
-# :::
+#
+# </details>
 #
 # **Next:** we stop assuming the sampler works, and start looking at when it
 # does not.
