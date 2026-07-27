@@ -23,6 +23,10 @@
 # 1. **what MCMC is actually doing** — including writing a sampler from scratch
 #    in ten lines, so it stops being a black box;
 # 2. **what makes a posterior hard**, on the cognitive model you just fitted.
+#
+# One idea runs through both. A posterior can be hard because of its **shape**,
+# and past a certain point no amount of sampler tuning repairs a bad shape —
+# you have to change the sampler, or change the experiment.
 
 # %%
 import sys, pathlib, warnings, time
@@ -229,24 +233,441 @@ print(pd.DataFrame(rows).to_string(index=False, float_format=lambda v: f"{v:9.3f
 #
 # </details>
 #
-# This is also why gradient-based samplers exist. NUTS does not guess a
-# direction and hope; it uses $\nabla \log \tilde{\pi}$ to move along the
-# distribution. We rely on that tomorrow — today it is enough to know what it
-# is replacing.
+# Notice what that table let us do: we **tuned our way out of trouble**. There
+# was a bad setting and a good one, we found the good one, and the sampler
+# worked. Hold on to that, because the next target takes it away.
 
 # %% [markdown]
-# ## 3. When the problem is the *posterior*, not the sampler
+# ## 3. When there is no good step size
 #
-# Now the cognitive model. At 14:30 everything recovered cleanly. Here are two
-# datasets from the **same** DDM, differing only in drift rate — and therefore
-# in how often the participant makes an error.
+# The mixture was hard in an *easy* way: one knob, and a right answer for it.
+# Now a target that is much simpler to write down and much harder to sample — a
+# two-dimensional Gaussian with correlation $\rho$:
+#
+# $$
+# \log \tilde{\pi}(x_0, x_1) \;=\;
+# -\,\frac{x_0^2 - 2\rho\, x_0 x_1 + x_1^2}{2\,(1 - \rho^2)} .
+# $$
+#
+# No multimodality, no heavy tails, no awkward constraint. Just an ellipse. As
+# $\rho \to 1$ that ellipse becomes a long thin ridge along the diagonal, and
+# that alone is enough to defeat the sampler we just wrote.
+
+# %%
+def log_target_gaussian(rho):
+    """Unnormalised 2-D Gaussian, unit marginals, correlation rho."""
+    denom = 2.0 * (1.0 - rho**2)
+
+    def log_target(theta):
+        x0, x1 = theta[0], theta[1]
+        return -(x0**2 - 2.0 * rho * x0 * x1 + x1**2) / denom
+
+    return log_target
+
+
+# The ellipse has a long axis along (1, 1) and a short axis along (1, -1).
+# Everything below reads more clearly in those coordinates than in x0 / x1.
+ALONG = np.array([1.0, 1.0]) / np.sqrt(2.0)      # up the ridge
+ACROSS = np.array([1.0, -1.0]) / np.sqrt(2.0)    # across it
+
+RHOS = [0.0, 0.9, 0.99]
+for rho in RHOS:
+    # the sd along each axis is sqrt(1 +/- rho)
+    print(f"rho = {rho:4.2f}:  length {np.sqrt(1 + rho):.3f}   "
+          f"width {np.sqrt(1 - rho):.3f}   "
+          f"aspect ratio {np.sqrt((1 + rho) / (1 - rho)):6.2f} : 1")
+
+# %% [markdown]
+# At $\rho = 0.99$ the target is **fourteen times longer than it is wide**. A
+# random-walk proposal is a *circle* — the same size step in every direction —
+# and no circle fits a shape like that.
+
+# %%
+def run_chains(log_target, step_size, n_chains=4, n_steps=25_000, warmup=5_000):
+    """Several independent chains, so an ESS estimate is not one seed's luck."""
+    kept, accs = [], []
+    for c in range(n_chains):
+        ch, a = metropolis(log_target, start=[0.0, 0.0], n_steps=n_steps,
+                           step_size=step_size, seed=RANDOM_SEED + c)
+        kept.append(ch[warmup:])
+        accs.append(a)
+    return np.stack(kept), float(np.mean(accs))     # (chain, draw, 2)
+
+
+def ess_per_draw(chains, direction):
+    """ESS as a fraction of draws, for the projection onto `direction`."""
+    projected = chains @ direction                   # (chain, draw)
+    dt = az.convert_to_datatree({"x": projected})
+    return float(az.ess(dt, var_names=["x"]).x) / projected.size
+
+
+STEPS = [0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0]
+sweep = []
+for rho in RHOS:
+    lt = log_target_gaussian(rho)
+    for s in STEPS:
+        chains, acc = run_chains(lt, s)
+        sweep.append({"rho": rho, "step_size": s, "acceptance": acc,
+                      "ESS/draw along": ess_per_draw(chains, ALONG),
+                      "ESS/draw across": ess_per_draw(chains, ACROSS)})
+sweep = pd.DataFrame(sweep)
+
+for rho in RHOS:
+    print(f"\n--- rho = {rho} " + "-" * 46)
+    print(sweep[sweep.rho == rho].drop(columns="rho")
+          .to_string(index=False, float_format=lambda v: f"{v:10.4f}"))
+
+# %% [markdown]
+# ### The squeeze
+
+# %%
+fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
+for ax, direction, name in [(axes[0], "along", "ALONG the ridge (the hard one)"),
+                            (axes[1], "across", "ACROSS the ridge (the easy one)")]:
+    for rho, colour in zip(RHOS, [S.ALT, S.PRIMARY, S.NAIVE]):
+        block = sweep[sweep.rho == rho]
+        ax.plot(block["step_size"], block[f"ESS/draw {direction}"], "o-",
+                color=colour, label=f"$\\rho$ = {rho}")
+    ax.set(xscale="log", yscale="log", xlabel="step size", title=name)
+axes[0].set_ylabel("ESS per draw")
+axes[0].legend(fontsize=9)
+fig.suptitle("No step size is good in both directions at once", y=1.02)
+fig.tight_layout()
+
+# %%
+worst = sweep[sweep.rho == 0.99]
+best_along = worst.loc[worst["ESS/draw along"].idxmax()]
+best_across = worst.loc[worst["ESS/draw across"].idxmax()]
+uncorrelated = sweep[sweep.rho == 0.0]["ESS/draw along"].max()
+
+print("at rho = 0.99:")
+print(f"  best step size ALONG  the ridge: {best_along['step_size']:5.2f}"
+      f"   (ESS/draw {best_along['ESS/draw along']:.4f})")
+print(f"  best step size ACROSS the ridge: {best_across['step_size']:5.2f}"
+      f"   (ESS/draw {best_across['ESS/draw across']:.4f})")
+print("  -> the two directions want DIFFERENT step sizes, and you get one.\n")
+print(f"  best achievable along the ridge : {best_along['ESS/draw along']:.4f}")
+print(f"  best achievable when rho = 0    : {uncorrelated:.4f}")
+print(f"  -> even at its own optimum, "
+      f"{uncorrelated / best_along['ESS/draw along']:.0f}x worse than "
+      "the uncorrelated target.")
+
+# %% [markdown]
+# That is the difference from the mixture. There, tuning *worked* — there was a
+# good step size and it was genuinely good. Here every step size is bad, in one
+# of two ways:
+#
+# - **small steps** stay inside the narrow width, so they are almost always
+#   accepted, and they crawl along a ridge fourteen times longer than it is wide;
+# - **large steps** are big enough to travel the ridge, but a *circular* step
+#   that large mostly lands off the ridge sideways, and is rejected.
+#
+# The two failures meet in a flat, mediocre middle. There is no knife-edge
+# setting you might have missed — the whole range is poor, and the best of it is
+# an order of magnitude below what the same sampler achieves on a round target.
+
+# %% [markdown]
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>A correct-looking answer from a chain that did not work</b></summary>
+#
+# The most dangerous cell in that table is the small-step one, because of what
+# it reports about itself. Run it and look:
+#
+# </details>
+
+# %%
+chains_bad, acc_bad = run_chains(log_target_gaussian(0.99), step_size=0.05)
+n_draws = chains_bad[..., 0].size
+ess_bad = ess_per_draw(chains_bad, ALONG)
+
+print(f"step_size 0.05, rho 0.99:  acceptance {acc_bad:.1%}")
+print(f"  sd(x0) from the chain = {chains_bad[..., 0].std():.3f}"
+      "   (the truth is exactly 1.000)")
+print(f"  ESS/draw along the ridge = {ess_bad:.5f}")
+print(f"  -> about {ess_bad * n_draws:.0f} independent draws out of {n_draws:,}")
+
+# %% [markdown]
+# A marginal standard deviation in the right neighbourhood is **not** evidence
+# that the chain worked. This one lands within a few percent of the truth while
+# containing a couple of dozen genuinely independent samples — and it does so
+# because the marginal it got roughly right is the direction it was *not*
+# struggling in. Check ESS and $\hat{R}$; do not eyeball whether the numbers
+# look plausible.
+
+# %% [markdown]
+# ## 4. The same target, in PyMC
+#
+# Two things are worth showing here. First, **PyMC gives you Metropolis too** —
+# the sampler we hand-wrote is a library call, and swapping it in is one
+# argument. Second, and the reason this section exists: **NUTS crosses this
+# target without being tuned at all.**
+
+# %%
+def gaussian_pymc_model(rho):
+    """A PyMC model whose posterior IS the correlated Gaussian — no data needed."""
+    cov = np.array([[1.0, rho], [rho, 1.0]])
+    with pm.Model() as model:
+        pm.MvNormal("x", mu=np.zeros(2), cov=cov, shape=2)
+    return model
+
+
+# `step=` picks the sampler. `pm.Metropolis()` must be constructed INSIDE the
+# model context — outside it you get "TypeError: No model on context stack".
+with gaussian_pymc_model(0.99):
+    idata_mh = pm.sample(draws=2000, tune=2000, chains=2, cores=1,
+                         step=pm.Metropolis(), progressbar=False,
+                         random_seed=RANDOM_SEED)
+
+print("Metropolis:")
+print(az.summary(idata_mh, kind="diagnostics").to_string())
+
+# %% [markdown]
+# `ess_bulk` in the single digits, and $\hat{R}$ far past the 1.01 threshold —
+# out of 4000 draws. PyMC prints warnings saying exactly this. Same model, same
+# budget, NUTS:
+
+# %%
+with gaussian_pymc_model(0.99):
+    idata_nuts = pm.sample(draws=2000, tune=2000, chains=2, cores=1,
+                           nuts_sampler="pymc", progressbar=False,
+                           random_seed=RANDOM_SEED)
+
+print("NUTS:")
+print(az.summary(idata_nuts, kind="diagnostics").to_string())
+
+# %% [markdown]
+# ### How far does this go?
+#
+# Push the correlation further and measure both samplers properly — including
+# whether the answer is *right*, not merely how fast it arrives.
+
+# %%
+def assess(idata, rho, sampler, seconds):
+    x = idata.posterior.dataset["x"].values              # (chain, draw, 2)
+    stats = idata["sample_stats"].dataset
+    return {
+        "rho": rho, "sampler": sampler,
+        "ESS/draw along": ess_per_draw(x, ALONG),
+        # the honest check: is the posterior the right WIDTH?
+        "sd along": float((x @ ALONG).std()),
+        "sd true": float(np.sqrt(1 + rho)),
+        "seconds": seconds,
+        # NUTS reports gradient evaluations per draw; Metropolis has no analogue
+        "grad/draw": float(stats["n_steps"].mean()) if "n_steps" in stats else np.nan,
+    }
+
+
+rows = []
+for rho in [0.9, 0.99, 0.999]:
+    for sampler in ["Metropolis", "NUTS"]:
+        t0 = time.time()
+        with gaussian_pymc_model(rho):
+            if sampler == "Metropolis":
+                idata = pm.sample(draws=2000, tune=2000, chains=2, cores=1,
+                                  step=pm.Metropolis(), progressbar=False,
+                                  random_seed=RANDOM_SEED)
+            else:
+                idata = pm.sample(draws=2000, tune=2000, chains=2, cores=1,
+                                  nuts_sampler="pymc", progressbar=False,
+                                  random_seed=RANDOM_SEED)
+        rows.append(assess(idata, rho, sampler, time.time() - t0))
+
+comparison = pd.DataFrame(rows)
+print(comparison.to_string(index=False, float_format=lambda v: f"{v:9.3f}"))
+
+# %% [markdown]
+# Read the `sd along` column against `sd true` beside it before anything else.
+
+# %%
+fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+rho_grid = comparison["rho"].unique()
+
+ax = axes[0]
+for sampler, colour in [("Metropolis", S.NAIVE), ("NUTS", S.PRIMARY)]:
+    b = comparison[comparison.sampler == sampler]
+    ax.plot(b["rho"], b["ESS/draw along"], "o-", color=colour, label=sampler)
+ax.set(yscale="log", xlabel=r"correlation $\rho$", ylabel="ESS per draw",
+       title="Efficiency along the ridge")
+ax.legend(fontsize=9)
+
+ax = axes[1]
+for sampler, colour in [("Metropolis", S.NAIVE), ("NUTS", S.PRIMARY)]:
+    b = comparison[comparison.sampler == sampler]
+    ax.plot(b["rho"], b["sd along"], "o-", color=colour, label=sampler)
+ax.plot(rho_grid, np.sqrt(1 + rho_grid), "--", color=S.TRUTH, lw=1.5,
+        label="true width")
+ax.set(xlabel=r"correlation $\rho$", ylabel="recovered sd along the ridge",
+       title="...and whether the answer is right")
+ax.legend(fontsize=9)
+fig.tight_layout()
+
+# %% [markdown]
+# <details class="sbi-key" open>
+# <summary>🔑 <b>Slow is survivable; unreliable is not</b></summary>
+#
+# At high correlation Metropolis does not merely mix slowly — the width it
+# reports stops being **reliable**. Compare its `sd along` to `sd true` at each
+# row: it misses in one direction at one correlation and the other direction at
+# the next, by margins of several percent to over ten, with no pattern. NUTS
+# tracks the truth throughout.
+#
+# That unpredictability is the danger, and it is worse than a consistent bias
+# would be. A chain that has not travelled a direction is reporting a summary of
+# the part of that direction it happened to visit — which could be too narrow
+# (it never reached the ends) or too wide (it wandered off and got stuck). You
+# cannot tell which from the chain, and nothing raises an error. That is why
+# $\hat{R}$ and ESS are not optional.
+#
+# NUTS instead keeps its ESS per draw roughly flat. What it pays is **compute**:
+# the `grad/draw` column climbs as the geometry worsens, because it needs longer
+# trajectories to cross the ridge. Ill-conditioning turns into a larger bill
+# rather than into a wrong number — that is the trade you want.
+#
+# </details>
+
+# %% [markdown]
+# ## 5. *Advanced:* Gibbs has the same problem, for a different reason
+#
+# *(Skip if we are short on time — nothing later depends on it.)*
+#
+# You might reasonably suspect the trouble was our clumsy tuning. So take tuning
+# off the table completely.
+#
+# For this Gaussian the **conditional** distributions are known in closed form:
+#
+# $$
+# x_0 \mid x_1 \;\sim\; \text{Normal}\!\left(\rho\, x_1,\ \sqrt{1-\rho^2}\right),
+# $$
+#
+# and symmetrically. A **Gibbs sampler** simply alternates: draw $x_0$ given
+# $x_1$, then $x_1$ given the new $x_0$. There is no step size, no proposal and
+# **no rejection** — every draw is exact and every draw is accepted.
+
+# %%
+def gibbs(rho, n_steps=25_000, seed=RANDOM_SEED, record_path=False):
+    """Coordinate-wise Gibbs. Nothing to tune; acceptance is 1 by construction."""
+    rng_g = np.random.default_rng(seed)
+    sd = np.sqrt(1.0 - rho**2)
+    x = np.zeros(2)
+    chain = np.empty((n_steps, 2))
+    path = [x.copy()]
+
+    for i in range(n_steps):
+        x[0] = rng_g.normal(rho * x[1], sd)      # x0 | x1
+        if record_path:
+            path.append(x.copy())
+        x[1] = rng_g.normal(rho * x[0], sd)      # x1 | x0
+        if record_path:
+            path.append(x.copy())
+        chain[i] = x
+
+    return (chain, np.array(path)) if record_path else chain
+
+
+gibbs_chains = {rho: np.stack([gibbs(rho, seed=RANDOM_SEED + c)[5_000:]
+                               for c in range(4)])
+                for rho in RHOS}
+
+rows = []
+for rho in RHOS:
+    ch = gibbs_chains[rho]
+    # Lag-1 autocorrelation via the ArviZ accessor. The `draw` axis of the
+    # RESULT is the lag, so index 1 is lag one.
+    dt = az.convert_to_datatree({"x": ch[..., 0]})
+    lag1 = float(dt.azstats.autocorr(dim="draw")["x"].isel(chain=0, draw=1))
+    rows.append({"rho": rho, "lag-1 of x0": lag1, "rho^2 (theory)": rho**2,
+                 "ESS/draw along": ess_per_draw(ch, ALONG),
+                 "ESS/draw across": ess_per_draw(ch, ACROSS)})
+print(pd.DataFrame(rows).to_string(index=False, float_format=lambda v: f"{v:10.4f}"))
+
+# %% [markdown]
+# Two things in that table.
+#
+# **The theory is exact.** For this target Gibbs turns each coordinate into an
+# AR(1) process with lag-1 correlation exactly $\rho^2$, and the measurement
+# lands on it. So a sampler with no knobs and a 100% acceptance rate is
+# nonetheless *guaranteed* to be slow here, by an amount you can write down
+# before running it.
+#
+# **The failure is directional.** Gibbs samples *across* the ridge essentially
+# perfectly — ESS per draw near 1, as good as independent draws — while being
+# about a hundred times subsampled *along* it. It is not a bad sampler. It is a
+# sampler that is excellent in one direction and hopeless in the other.
+#
+# The picture shows why:
+
+# %%
+_, path = gibbs(0.99, n_steps=40, seed=RANDOM_SEED, record_path=True)
+
+fig, ax = plt.subplots(figsize=(6.0, 5.4))
+g = np.linspace(-3.5, 3.5, 200)
+X0, X1 = np.meshgrid(g, g)
+Z = np.exp(-(X0**2 - 2 * 0.99 * X0 * X1 + X1**2) / (2 * (1 - 0.99**2)))
+ax.contour(X0, X1, Z, levels=5, colors=S.MUTED, linewidths=0.8)
+ax.plot(path[:, 0], path[:, 1], "-", color=S.NAIVE, lw=1.1, alpha=0.9)
+ax.plot(path[:, 0], path[:, 1], "o", color=S.NAIVE, ms=2.5, ls="none")
+ax.plot(path[0, 0], path[0, 1], "o", color=S.DIVERGENT, ms=8, label="start")
+ax.set(title=r"40 Gibbs sweeps at $\rho = 0.99$", xlabel="$x_0$", ylabel="$x_1$",
+       xlim=(-3.5, 3.5), ylim=(-3.5, 3.5))
+ax.legend(fontsize=9)
+fig.tight_layout()
+
+# %% [markdown]
+# Every move is **horizontal or vertical**, because every move updates one
+# coordinate. The ridge runs at 45°. So the chain can only climb it as a
+# staircase of tiny right-angled steps, each limited by the *width* of the ridge
+# rather than by its length. Nothing here is tunable: the constraint is the
+# **coordinate system**, not the step length.
+
+# %%
+step_along = np.diff(gibbs_chains[0.99][0] @ ALONG)
+print("at rho = 0.99, per Gibbs sweep:")
+print(f"  rms movement ALONG the ridge : {step_along.std():.3f}")
+print(f"  the ridge's own length (sd)  : {np.sqrt(1 + 0.99):.3f}")
+print(f"  -> one sweep covers {step_along.std() / np.sqrt(1.99):.1%} of the ridge")
+
+# %% [markdown]
+# <details class="sbi-note">
+# <summary>📝 <b>Is Gibbs worse than Metropolis here? No — and that is the point</b></summary>
+#
+# Compare the two tables honestly. Along the ridge Gibbs lands in much the same
+# place as a *well-tuned* random-walk Metropolis, and across the ridge it is
+# comfortably better — and it got there with no step-size sweep at all. That is
+# a genuine practical advantage.
+#
+# But it is still two orders of magnitude short of independent sampling, and
+# **no setting exists that would fix it**, because there is no setting. Two
+# quite different algorithms, defeated by the same ellipse. That is what tells
+# you the problem was never the algorithm.
+#
+# One connection worth noticing: `pm.Metropolis()` in the previous section also
+# updates a vector one coordinate at a time. Its moves are axis-aligned too, so
+# it inherits precisely this weakness.
+#
+# </details>
+
+# %% [markdown]
+# ## 6. When the problem is the *posterior*, not the sampler
+#
+# Everything so far used a target we invented, with a correlation we chose. Now
+# the cognitive model — where the same geometry shows up without anyone asking
+# for it, and where you cannot fix it by changing sampler.
+#
+# At 14:30 everything recovered cleanly. Here are two datasets from the **same**
+# DDM, differing only in drift rate — and therefore in how often the participant
+# makes an error.
 
 # %%
 from hssm.likelihoods import DDM
 from ssms import Simulator
 
 DRAWS, TUNE, CHAINS = 700, 700, 2
-TRUE = {"v_balanced": 0.5, "v_extreme": 3.0, "a": 1.2, "z": 0.5, "t": 0.3}
+# z = 0.65 puts the start point above the midpoint, so the process begins nearer
+# the "+1" boundary. That asymmetry is what makes the geometry legible later.
+# v_balanced is set to land the error rate inside the 15-35% band that the
+# design literature recommends — with a biased start point that takes a smaller
+# drift than you might expect.
+TRUE = {"v_balanced": 0.2, "v_extreme": 3.0, "a": 1.2, "z": 0.65, "t": 0.3}
 PARAMS = ["v", "a", "z", "t"]
 
 
@@ -267,17 +688,18 @@ def fit_ddm(observed, seed=RANDOM_SEED):
                          nuts_sampler="pymc", progressbar=False, random_seed=seed)
 
 
-fits, posteriors = {}, {}
+fits, posteriors, error_rates = {}, {}, {}
 for label, v_true in [("balanced", TRUE["v_balanced"]), ("extreme", TRUE["v_extreme"])]:
     obs = make(v_true)
-    err = (obs[:, 1] == -1).mean()
+    error_rates[label] = (obs[:, 1] == -1).mean()
     idata = fit_ddm(obs)
     fits[label] = idata
     p = idata.posterior.dataset
     posteriors[label] = {k: p[k].values.ravel() for k in PARAMS}
-    print(f"{label:9s} error rate {err:5.1%}   "
+    print(f"{label:9s} error rate {error_rates[label]:5.1%}   "
           + "  ".join(f"{k}={posteriors[label][k].mean():5.2f}" for k in PARAMS))
-print(f"\ntruth: v=0.5 or 3.0, a={TRUE['a']}, z={TRUE['z']}, t={TRUE['t']}")
+print(f"\ntruth: v={TRUE['v_balanced']} or {TRUE['v_extreme']}, a={TRUE['a']}, "
+      f"z={TRUE['z']}, t={TRUE['t']}")
 
 # %% [markdown]
 # ### The correlation structure is the diagnosis
@@ -298,67 +720,154 @@ fig.colorbar(im, ax=axes, shrink=0.8, label="posterior correlation")
 fig.suptitle("Every parameter pair, both designs", y=1.02)
 
 # %% [markdown]
-# In the balanced design the correlations are moderate and *structured*: `a`
-# with `t` (both push the RT distribution rightward) and `v` with `z` (both
-# push toward one boundary).
-#
-# In the extreme design **everything correlates with everything**, and the
-# strongest pair is not the one people usually name. It is not $v$ with $a$ —
-# it is $v$ with $t$, the drift rate against the non-decision time. (Read the
-# actual number off the matrix above; how extreme it gets varies from dataset
-# to dataset, but the *pattern* does not.)
-#
-# The mechanism is simple once stated. With essentially no errors, the choices
-# carry no information at all — every trial went the same way — so the *only*
-# signal left is the response-time distribution. And
-#
-# $$
-# \text{RT} \;=\; \underbrace{t}_{\text{non-decision}}
-# \;+\; \underbrace{\text{decision time}}_{\approx\, a / v \text{ for large } v} .
-# $$
-#
-# Raise $t$ and lower $v$ together and total RT is unchanged. That is a
-# near-perfect one-dimensional ridge: the data cannot tell the two apart.
+# In the balanced design the correlations are moderate and *structured*. In the
+# extreme design one pair dominates everything else. Rank them and look:
 
 # %%
-fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
-for ax, label in zip(axes, ["balanced", "extreme"]):
+def ranked_pairs(d):
+    out = []
+    for i, p in enumerate(PARAMS):
+        for q in PARAMS[i + 1:]:
+            out.append((f"{p}-{q}", np.corrcoef(d[p], d[q])[0, 1]))
+    return sorted(out, key=lambda kv: -abs(kv[1]))
+
+
+for label in ["balanced", "extreme"]:
+    pairs = ranked_pairs(posteriors[label])
+    print(f"{label:9s} " + "   ".join(f"{nm} {r:+.2f}" for nm, r in pairs))
+
+# %% [markdown]
+# The strongest pair in the extreme design is **`a` with `z`** — boundary
+# separation against start point — and the *weakest* is `v` with `a`. That is
+# worth pausing on, because `v`–`a` is the pair people reach for first.
+#
+# ### Why `a` and `z` collapse together
+#
+# With essentially no errors, every single trial ended at the **same** boundary.
+# So ask what the data can possibly measure. The process starts at $z\,a$ and
+# has to travel
+#
+# $$
+# \underbrace{a\,(1 - z)}_{\text{to the boundary it reaches}}
+# \qquad\text{versus}\qquad
+# \underbrace{a\,z}_{\text{to the boundary nobody ever reaches}} .
+# $$
+#
+# Only the first of those leaves a trace in the data. And *that* distance is a
+# single number built from two parameters — so `a` and `z` are free to slide
+# together as long as their combination holds still.
+
+# %%
+def rel_width(x):
+    """sd relative to the mean — comparable across parameters on different scales."""
+    return x.std() / abs(x.mean())
+
+
+print(f"{'quantity':30s} {'balanced':>10s} {'extreme':>10s}")
+for name, f in [
+    ("a  (boundary)", lambda d: d["a"]),
+    ("z  (start point)", lambda d: d["z"]),
+    ("a*(1-z)  distance travelled", lambda d: d["a"] * (1 - d["z"])),
+    ("a*z      distance NOT travelled", lambda d: d["a"] * d["z"]),
+]:
+    print(f"{name:30s} {rel_width(f(posteriors['balanced'])):10.3f} "
+          f"{rel_width(f(posteriors['extreme'])):10.3f}")
+
+# %% [markdown]
+# There is the whole story in four rows. Read the `extreme` column top to
+# bottom: `a` on its own is badly determined, `z` on its own is poor, but the
+# distance the process actually **travelled** is the best-determined of the
+# three — and the distance to the boundary nobody ever reached is the worst of
+# the lot by a clear margin.
+#
+# The data measured what happened. It could not measure what never happened.
+#
+# This is also why `v`–`a` looks so weak: `a` on its own is not the
+# quantity the experiment sees. Combine it with `z` first, and the trade-off
+# reappears.
+
+# %%
+fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+for col, label in enumerate(["balanced", "extreme"]):
     d = posteriors[label]
+
+    ax = axes[0, col]
+    r = np.corrcoef(d["a"], d["z"])[0, 1]
+    ax.plot(d["a"], d["z"], "o", color=S.PRIMARY, ms=2.5, alpha=0.25, ls="none",
+            label="posterior draws")
+    S.truth_point(ax, TRUE["a"], TRUE["z"])
+    ax.set(title=f"{label}:  corr(a, z) = {r:+.2f}",
+           xlabel="boundary separation $a$", ylabel="start point $z$")
+    ax.legend(loc="lower right", fontsize=9)
+
+    ax = axes[1, col]
     r = np.corrcoef(d["v"], d["t"])[0, 1]
-    ax.plot(d["v"], d["t"], "o", color=S.PRIMARY, ms=2.5, alpha=0.25, ls="none",
+    ax.plot(d["v"], d["t"], "o", color=S.NAIVE, ms=2.5, alpha=0.25, ls="none",
             label="posterior draws")
     S.truth_point(ax, TRUE[f"v_{label}"], TRUE["t"])
     ax.set(title=f"{label}:  corr(v, t) = {r:+.2f}",
            xlabel="drift $v$", ylabel="non-decision time $t$")
     ax.legend(loc="upper right", fontsize=9)
+fig.suptitle("The two trade-offs, in both designs", y=1.00)
 fig.tight_layout()
 
 # %% [markdown]
-# On the left, a compact blob on the truth. On the right, a long thin ridge —
-# and the truth is on it, but so is every other point along the line.
+# Left column: compact blobs sitting on the truth. Right column: long thin
+# ridges. The truth is on each ridge — but so is every other point along it,
+# and the data have no way to say which.
 #
-# The consequences are severe and easy to miss:
+# The second row is the same failure in the time domain rather than the
+# geometry: total response time is non-decision time plus decision time, and
+# the fit can shuffle duration between the two while keeping the total fixed.
+#
+# ### What that costs you
 
 # %%
-tab = []
-for label in ["balanced", "extreme"]:
-    d = posteriors[label]
-    tab.append({"design": label,
-                **{f"sd({k})": d[k].std() for k in PARAMS},
-                "v_hat": d["v"].mean(),
-                "corr(v,t)": np.corrcoef(d["v"], d["t"])[0, 1]})
-print(pd.DataFrame(tab).to_string(index=False, float_format=lambda v: f"{v:8.3f}"))
-print(f"\ntrue v in the extreme design: {TRUE['v_extreme']}")
+fig, axes = plt.subplots(1, 4, figsize=(13, 3.4))
+for ax, k in zip(axes, PARAMS):
+    # Centre each design on ITS OWN truth, so the axis is estimation error and
+    # the two designs are comparable even though true v differs between them.
+    truth = {"v": None, "a": TRUE["a"], "z": TRUE["z"], "t": TRUE["t"]}[k]
+    err = {lab: posteriors[lab][k] - (TRUE[f"v_{lab}"] if truth is None else truth)
+           for lab in ["balanced", "extreme"]}
+
+    lo = min(e.min() for e in err.values())
+    hi = max(e.max() for e in err.values())
+    bins = np.linspace(lo, hi, 60)
+
+    ax.hist(err["extreme"], bins=bins, density=True, color=S.NAIVE, alpha=0.65,
+            label=f"extreme ({error_rates['extreme']:.0%} errors)")
+    ax.hist(err["balanced"], bins=bins, density=True, color=S.PRIMARY, alpha=0.85,
+            label=f"balanced ({error_rates['balanced']:.0%} errors)")
+    S.truth_line(ax, 0.0, axis="x")
+
+    ratio = err["extreme"].std() / err["balanced"].std()
+    ax.set(title=f"${k}$ — {ratio:.1f}x wider", xlabel=f"estimate $-$ true ${k}$",
+           yticks=[])
+axes[0].set_ylabel("density")
+axes[0].legend(fontsize=8, loc="upper left")
+fig.suptitle("Same model, same number of trials — only the error rate differs",
+             y=1.03)
+fig.tight_layout()
+
+# %%
+for k in PARAMS:
+    b, e = posteriors["balanced"][k].std(), posteriors["extreme"][k].std()
+    print(f"sd({k}): {b:.4f} -> {e:.4f}   ({e / b:5.1f}x wider)")
 
 # %% [markdown]
 # <details class="sbi-key" open>
 # <summary>🔑 <b>High accuracy is bad data for parameter estimation</b></summary>
 #
-# This is the counterintuitive headline. Compare the two rows above: the
-# near-perfect dataset gives posteriors several times wider on every parameter,
-# lying along a ridge rather than filling a blob. Nothing is wrong with the
-# sampler and nothing is wrong with the model — **the experiment did not
-# collect the information**.
+# This is the counterintuitive headline. Compare the two histograms in each
+# panel: the near-perfect dataset gives posteriors several times wider on every
+# parameter, lying along a ridge rather than filling a blob. Nothing is wrong
+# with the sampler and nothing is wrong with the model — **the experiment did
+# not collect the information**.
+#
+# Notice that `t` is barely affected while `a` blows up. The damage is not
+# spread evenly: it lands on whichever parameters enter only through a
+# combination the data cannot break apart.
 #
 # Whether the point estimates also come out *biased* varies from dataset to
 # dataset, which is itself worth noticing: on a ridge, where the posterior mean
@@ -376,31 +885,33 @@ print(f"\ntrue v in the extreme design: {TRUE['v_extreme']}")
 #
 # ### Exercise
 #
-# We measured `corr(v, t)`. Which pair is strongest in the **balanced** design,
-# and does the mechanism make sense to you?
+# We set the true start point to `z = 0.65`, above the midpoint. Predict what
+# happens to `corr(a, z)` if you push it to `0.80`, then check.
 #
 # <details>
 # <summary>Answer</summary>
 #
-# `a`–`t` and `v`–`z` — read the exact values off the matrix you just plotted.
+# Change `TRUE["z"]` and re-run the extreme-design fit. The `a`–`z` correlation
+# stays strong — it is around `+0.84` to `+0.90` anywhere in this range, because
+# the mechanism does not depend on *which* boundary wins, only on the fact that
+# one of them always does.
 #
-# Both are interpretable. Boundary separation and non-decision time both make
-# responses slower, so raising one and lowering the other keeps mean RT roughly
-# fixed — they compete to explain the same feature of the data. Drift and start
-# point both push the process toward the upper boundary, so they compete to
-# explain the choice proportion.
+# What does change is `a` itself: the distance travelled is $a(1-z)$, so a
+# larger `z` means a smaller `a` reproduces the same data, and the posterior for
+# `a` shifts down accordingly.
 #
-# Notice how far down the list `v`–`a` sits — the pair people most often name is
-# not the one doing the damage in either design. Check which parameters actually
-# trade off in *your* fit rather than assuming.
+# The instructive part is what happens if you go the *other* way and set
+# `z = 0.5` with a balanced drift. Both trade-offs weaken at once, because now
+# both boundaries get reached and the data can see both distances. Identifiability
+# is a property of the **design**, not of the model.
 #
 # </details>
 
 # %% [markdown]
 # ## What to take away
 #
-# <details class="sbi-tip">
-# <summary>💡 <b>The four things that matter</b></summary>
+# <details class="sbi-tip" open>
+# <summary>💡 <b>The six things that matter</b></summary>
 #
 #
 # 1. **MCMC turns integrals into averages.** You cannot integrate $\pi$, so you
@@ -409,8 +920,17 @@ print(f"\ntrue v in the extreme design: {TRUE['v_extreme']}")
 #    *ratio*, so the evidence $p(y)$ never has to be computed to sample a
 #    posterior.
 # 3. **Acceptance rate is not quality.** A tiny step size accepts nearly
-#    everything and explores nearly nothing. Judge by ESS.
-# 4. **Some posteriors are hard because of the data, not the sampler.** A
+#    everything and explores nearly nothing. Judge by ESS — and remember that a
+#    marginal `sd` landing on the right answer proves nothing.
+# 4. **Correlation is what breaks random-walk samplers.** On a long thin ridge
+#    there is no good step size: small steps crawl, large steps get rejected,
+#    and the two directions want different settings. Gibbs fails on the same
+#    ridge without having a step size at all — which is how you know the
+#    algorithm was never the problem.
+# 5. **Slow is survivable; wrong is not.** A chain that never traverses a
+#    direction reports that direction as certain. NUTS converts bad geometry
+#    into a bigger compute bill instead of a confident wrong answer.
+# 6. **Some posteriors are hard because of the data, not the sampler.** A
 #    near-degenerate ridge is the experiment's fault, and no sampler fixes it.
 #
 # </details>
@@ -421,7 +941,9 @@ print(f"\ntrue v in the extreme design: {TRUE['v_extreme']}")
 # |---|---|
 # | see the trade-off structure | correlation matrix of posterior draws |
 # | see a specific trade-off | scatter the two parameters, mark the truth |
-# | judge a sampler | `az.ess`, never the acceptance rate |
+# | find what IS identified | look for a combination with a small relative width |
+# | judge a sampler | `az.ess` and $\hat{R}$, never the acceptance rate |
+# | run Metropolis in PyMC | `pm.sample(..., step=pm.Metropolis())`, built inside the model |
 # | design a study you can fit | aim for **15-35% errors** |
 #
 # **Next, tomorrow at 11:00:** today's difficulties came from correlation that
