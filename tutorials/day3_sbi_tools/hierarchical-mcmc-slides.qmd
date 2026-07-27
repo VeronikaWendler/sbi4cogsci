@@ -357,12 +357,13 @@ must shrink.
 ## Look at where the blue points *stop*
 
 Both top panels share a $\log\tau$ axis. The centered chain gives up at
-$\log\tau \approx -0.3$; the non-centered one carries on to $-6.9$.
+$\log\tau \approx -0.9$; the non-centered one carries on to $-6.4$.
 
 | weak likelihood | centered | non-centered |
 |---|---|---|
-| divergences | **346** | 13 |
-| reaches $\log\tau$ | $-0.3$ | $\mathbf{-6.9}$ |
+| divergences | **670** | 3 |
+| reaches $\log\tau$ | $-0.9$ | $\mathbf{-6.4}$ |
+| ESS($\tau$) | **67** | $\mathbf{3491}$ |
 
 . . .
 
@@ -373,14 +374,16 @@ all** — and it reports $\hat{R} \approx 1$ while doing so.
 
 | strong likelihood | centered | non-centered |
 |---|---|---|
-| divergences | **0** | 2 |
+| divergences | 0 | 0 |
+| ESS($\tau$) | $\mathbf{18378}$ | **196** |
 
 . . .
 
-Centered went from 346 divergences to **zero**. Non-centered went from 13 to
-2 — but look at its panel: $z_1$ and $\log\tau$ are now on a hard **diagonal
-ridge**. To keep $\theta_g$ where the data wants it while $\tau$ grows, $z_g$
-must shrink. That is the inverted funnel.
+Neither fit diverges now, so the divergence count has nothing to say — and the
+ESS has swapped sides by a factor of **94**. Look at the non-centered panel:
+$z_1$ and $\log\tau$ are on a hard **diagonal ridge**. To keep $\theta_g$ where
+the data wants it while $\tau$ grows, $z_g$ must shrink. That is the inverted
+funnel.
 
 ::: {.callout-note}
 ## Why non-centered is still the usual default

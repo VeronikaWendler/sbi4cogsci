@@ -15,6 +15,16 @@ marimo cell with `mo.ui.slider` without re-running an MCMC fit on every drag:
     result = pooling_experiment(...)          # once, in its own cell
     fig_shrinkage(result, highlight_n=n.value)  # re-runs on every slider move
 
+**Why these build `Figure()` rather than calling `plt.subplots()`.** A figure
+created through pyplot is registered in pyplot's global list, and a Jupyter
+cell ending in `fig_shrinkage(result)` then renders it *twice*: once because the
+inline backend flushes every open figure at the end of the cell
+(`display_data`), and again because the returned Figure is the cell's value
+(`execute_result`). Constructing the Figure directly keeps it out of that global
+registry, so the return value is the only thing displayed — one copy, in the
+notebook and in marimo alike. `savefig` works exactly as before, which is what
+the slide baker uses.
+
 Colours come from `sbi4cogsci_style`, so a colour means the same thing here as
 in every other session.
 """
@@ -22,8 +32,16 @@ in every other session.
 from __future__ import annotations
 
 import numpy as np
+from matplotlib.figure import Figure
 
 import sbi4cogsci_style as S
+
+
+def _new_figure(figsize, nrows=1, ncols=1):
+    """A standalone Figure plus its Axes — deliberately not via pyplot."""
+    fig = Figure(figsize=figsize)
+    return fig, fig.subplots(nrows, ncols)
+
 
 # --------------------------------------------------------------------------
 # Neal's funnel — geometry, no data
@@ -40,11 +58,9 @@ def funnel_draws(n: int = 40_000, sd_v: float = 3.0, seed: int = 0):
 
 def fig_funnel(x, v, *, xlim=25.0, neck_below=-3.0, ax=None, title="Neal's funnel"):
     """The funnel, with the neck marked. `neck_below` shades v < that value."""
-    import matplotlib.pyplot as plt
-
     fig = None
     if ax is None:
-        fig, ax = plt.subplots(figsize=(6.4, 4.4))
+        fig, ax = _new_figure((6.4, 4.4))
     keep = np.abs(x) < xlim
     ax.plot(x[keep], v[keep], "o", color=S.PRIMARY, ms=1.5, alpha=0.15,
             ls="none", label="prior draws")
@@ -166,11 +182,9 @@ def fig_shrinkage(result, *, split_at=30, ax=None, ylabel="estimated drift $v$",
     `partial_pooling` — which is why the regression capstone reuses it rather
     than defining a second near-identical plot.
     """
-    import matplotlib.pyplot as plt
-
     fig = None
     if ax is None:
-        fig, ax = plt.subplots(figsize=(7.2, 4.4))
+        fig, ax = _new_figure((7.2, 4.4))
 
     n = result["trial_counts"]
     for j in range(n.size):
@@ -194,11 +208,9 @@ def fig_shrinkage(result, *, split_at=30, ax=None, ylabel="estimated drift $v$",
 
 def fig_pooling_error(result, *, split_at=30, ax=None):
     """Absolute error against trial count, for both fits."""
-    import matplotlib.pyplot as plt
-
     fig = None
     if ax is None:
-        fig, ax = plt.subplots(figsize=(7.2, 4.0))
+        fig, ax = _new_figure((7.2, 4.0))
     n = result["trial_counts"]
     for key, colour, label in (("no_pooling", S.NAIVE, "no pooling"),
                                ("partial_pooling", S.PRIMARY, "partial pooling")):
@@ -315,13 +327,44 @@ def regression_experiment(seed=0, **kwargs):
 # --------------------------------------------------------------------------
 
 
-#: The eight-schools data (Rubin 1981). Used here because it is the canonical
-#: case where the funnel actually *manifests*: the school effects are small
-#: relative to their standard errors, so the posterior for tau extends right
-#: down to zero and the neck is reachable. Simulated panels where tau is
-#: genuinely non-zero push tau upward and the neck never appears.
+#: The eight-schools data (Rubin 1981). The canonical case where the funnel
+#: actually *manifests*: the school effects are small relative to their standard
+#: errors, so the posterior for tau extends right down to zero and the neck is
+#: reachable. Simulated panels where tau is genuinely non-zero push tau upward
+#: and the neck never appears.
 EIGHT_SCHOOLS_Y = np.array([28.0, 8.0, -3.0, 7.0, -1.0, 1.0, 18.0, 12.0])
 EIGHT_SCHOOLS_SE = np.array([15.0, 10.0, 16.0, 11.0, 9.0, 11.0, 10.0, 18.0])
+
+#: More groups makes the funnel *worse*, and that is the point of using more
+#: than eight. Every group contributes one theta that has to fit through the
+#: same neck, so the centered parameterization has to thread N coordinates
+#: simultaneously rather than eight. Measured on this panel, weak likelihood,
+#: centered, as the group count rises 8 -> 16 -> 32 -> 64:
+#:
+#:     divergences   346 ->  333 ->  670 -> 1038
+#:     ESS(tau)      390 ->  163 ->   67 ->   11
+#:
+#: while the non-centered fit stays healthy throughout (ESS(tau) 4577 -> 2689).
+DEFAULT_N_GROUPS = 32
+
+
+def simulate_school_panel(n_groups=DEFAULT_N_GROUPS, seed=0):
+    """A panel with the *eight-schools character*, at any number of groups.
+
+    The property that matters is not the specific numbers, it is that each
+    group's effect is small next to its own standard error. That is what lets
+    the posterior for tau reach zero, which is what makes the neck reachable.
+    So: standard errors spanning the same range as Rubin's, and a true tau of
+    zero.
+
+    Returns the real Rubin (1981) data unchanged when `n_groups == 8`, so the
+    canonical case is still exactly the canonical case.
+    """
+    if n_groups == 8:
+        return EIGHT_SCHOOLS_Y.copy(), EIGHT_SCHOOLS_SE.copy()
+    rng = np.random.default_rng(seed)
+    se = rng.uniform(EIGHT_SCHOOLS_SE.min(), EIGHT_SCHOOLS_SE.max(), n_groups)
+    return rng.normal(8.0, se), se
 
 
 def _hier_normal(y, se, *, parameterization):
@@ -347,21 +390,26 @@ def _hier_normal(y, se, *, parameterization):
 
 
 def geometry_experiment(se_scales=(1.0, 0.05), draws=2000, tune=2000,
-                        chains=4, seed=0):
-    """Fit eight schools both ways, at two data strengths.
+                        chains=4, seed=0, n_groups=DEFAULT_N_GROUPS):
+    """Fit a schools-like panel both ways, at two data strengths.
 
-    `se_scales` multiplies the standard errors: 1.0 is the real data (weak
-    likelihood, prior dominates) and a small value makes each school's own
-    estimate precise (likelihood dominates). Varying the observation scale is
-    exactly the manipulation Betancourt & Girolami use for their Figure 8.
+    `se_scales` multiplies the standard errors: 1.0 is the weak-likelihood case
+    (prior dominates) and a small value makes each group's own estimate precise
+    (likelihood dominates). Varying the observation scale is exactly the
+    manipulation Betancourt & Girolami use for their Figure 8.
+
+    `n_groups` defaults to more than eight because the funnel sharpens with the
+    group count — see `DEFAULT_N_GROUPS`. Pass 8 for Rubin's original data.
     """
     import pymc as pm
+    import arviz as az
 
+    y, se_base = simulate_school_panel(n_groups, seed=seed)
     out = {}
     for scale in se_scales:
-        se = EIGHT_SCHOOLS_SE * scale
+        se = se_base * scale
         for par in ("centered", "non-centered"):
-            with _hier_normal(EIGHT_SCHOOLS_Y, se, parameterization=par):
+            with _hier_normal(y, se, parameterization=par):
                 idata = pm.sample(draws=draws, tune=tune, chains=chains, cores=1,
                                   nuts_sampler="pymc", progressbar=False,
                                   random_seed=seed)
@@ -378,8 +426,12 @@ def geometry_experiment(se_scales=(1.0, 0.05), draws=2000, tune=2000,
                 "diverging": idata.sample_stats["diverging"].values.ravel(),
                 "n_divergences": int(idata.sample_stats["diverging"].values.sum()),
                 "min_log_tau": float(log_tau.min()),
+                # ESS(tau) is the number that exposes the weak-data failure most
+                # sharply — divergences say something is wrong, this says how
+                # much of the chain was actually worth having.
+                "ess_tau": float(az.ess(idata, var_names=["tau"]).tau),
             }
-    return {"results": out, "se_scales": tuple(se_scales)}
+    return {"results": out, "se_scales": tuple(se_scales), "n_groups": n_groups}
 
 
 def fig_geometry_grid(experiment, figsize=(11.0, 7.2)):
@@ -390,10 +442,8 @@ def fig_geometry_grid(experiment, figsize=(11.0, 7.2)):
     carries on orders of magnitude further down. You are looking for where the
     blue points *end*, not only for their shape.
     """
-    import matplotlib.pyplot as plt
-
     res, scales = experiment["results"], experiment["se_scales"]
-    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    fig, axes = _new_figure(figsize, 2, 2)
     for r, scale in enumerate(scales):
         row = [res[(scale, p)] for p in ("centered", "non-centered")]
         lo = min(d["log_tau"].min() for d in row) - 0.3

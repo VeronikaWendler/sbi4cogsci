@@ -355,24 +355,34 @@ print(pd.DataFrame(rows).to_string(index=False, float_format=lambda x: f"{x:8.3f
 # - **lots of data per group** → likelihood dominates → **centered** wins
 #
 # Let us find the crossover instead of taking it on faith. A standard
-# hierarchical normal, sweeping the number of observations per group.
+# hierarchical normal, sweeping the number of observations per group — and
+# sweeping it well past the point where the crossover happens, because the
+# behaviour on the far side is half the lesson.
 
 # %%
-N_GROUPS, TRUE_MU, TRUE_TAU, OBS_SIGMA = 8, 0.0, 1.0, 1.0
+# Two things get swept, not one. `obs_per_group` is the usual axis. But the
+# NUMBER of groups is a second knob on the same geometry — every group adds one
+# theta that must fit through the same neck — so we run the whole sweep at two
+# panel sizes and let them be compared.
+GROUP_COUNTS = [8, 24]
+OBS_PER_GROUP = [1, 3, 10, 30, 100, 300, 1000]      # well past the crossover
+TRUE_MU, TRUE_TAU, OBS_SIGMA = 0.0, 1.0, 1.0
 
 
-def make_groups(obs_per_group, seed):
+def make_groups(n_groups, obs_per_group, seed):
     g = np.random.default_rng(seed)
-    theta = g.normal(TRUE_MU, TRUE_TAU, N_GROUPS)
-    y = g.normal(theta[:, None], OBS_SIGMA, (N_GROUPS, obs_per_group))
+    theta = g.normal(TRUE_MU, TRUE_TAU, n_groups)
+    y = g.normal(theta[:, None], OBS_SIGMA, (n_groups, obs_per_group))
     return y.mean(axis=1), OBS_SIGMA / np.sqrt(obs_per_group)
 
 
+# Both builders take their group count from the data, so nothing is pinned to a
+# module-level constant and the sweep can vary it freely.
 def hier_centered(y_bar, se):
     with pm.Model() as m:
         mu = pm.Normal("mu", 0.0, 5.0)
         tau = pm.HalfNormal("tau", 5.0)
-        theta = pm.Normal("theta", mu, tau, shape=N_GROUPS)
+        theta = pm.Normal("theta", mu, tau, shape=y_bar.size)
         pm.Normal("y", theta, se, observed=y_bar)
     return m
 
@@ -381,44 +391,62 @@ def hier_noncentered(y_bar, se):
     with pm.Model() as m:
         mu = pm.Normal("mu", 0.0, 5.0)
         tau = pm.HalfNormal("tau", 5.0)
-        z = pm.Normal("z", 0.0, 1.0, shape=N_GROUPS)
+        z = pm.Normal("z", 0.0, 1.0, shape=y_bar.size)
         theta = pm.Deterministic("theta", mu + tau * z)
         pm.Normal("y", theta, se, observed=y_bar)
     return m
 
 
 sweep = []
-for obs in [1, 3, 10, 30, 100]:
-    y_bar, se = make_groups(obs, seed=RANDOM_SEED + obs)
-    for label, builder in [("centered", hier_centered),
-                           ("non-centered", hier_noncentered)]:
-        idata = sample(builder(y_bar, se))
-        grads = idata.sample_stats["n_steps"].values.sum() \
-            if "n_steps" in idata.sample_stats else np.nan
-        ess = float(az.ess(idata, var_names=["tau"]).tau)
-        sweep.append({"obs/group": obs, "param": label,
-                      "divergences": int(idata.sample_stats["diverging"].values.sum()),
-                      "ESS(tau)": ess,
-                      "ESS per 1k grads": 1000 * ess / grads if grads == grads else np.nan})
+for n_groups in GROUP_COUNTS:
+    for obs in OBS_PER_GROUP:
+        y_bar, se = make_groups(n_groups, obs, seed=RANDOM_SEED + obs)
+        for label, builder in [("centered", hier_centered),
+                               ("non-centered", hier_noncentered)]:
+            idata = sample(builder(y_bar, se))
+            grads = idata.sample_stats["n_steps"].values.sum() \
+                if "n_steps" in idata.sample_stats else np.nan
+            ess = float(az.ess(idata, var_names=["tau"]).tau)
+            sweep.append({"groups": n_groups, "obs/group": obs, "param": label,
+                          "divergences": int(idata.sample_stats["diverging"].values.sum()),
+                          "ESS(tau)": ess,
+                          "ESS per 1k grads": 1000 * ess / grads if grads == grads else np.nan})
 
 sweep = pd.DataFrame(sweep)
-print(sweep.to_string(index=False, float_format=lambda x: f"{x:9.2f}"))
+for n_groups in GROUP_COUNTS:
+    print(f"\n--- {n_groups} groups " + "-" * 44)
+    print(sweep[sweep.groups == n_groups].drop(columns="groups")
+          .to_string(index=False, float_format=lambda x: f"{x:9.2f}"))
 
 # %%
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 3.9))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.5, 4.1))
 for label, colour in [("centered", S.NAIVE), ("non-centered", S.PRIMARY)]:
-    sub = sweep[sweep.param == label]
-    ax1.plot(sub["obs/group"], sub["divergences"], "o-", color=colour, label=label)
-    ax2.plot(sub["obs/group"], sub["ESS per 1k grads"], "o-", color=colour, label=label)
+    for n_groups, style in zip(GROUP_COUNTS, ["-", "--"]):
+        sub = sweep[(sweep.param == label) & (sweep.groups == n_groups)]
+        tag = f"{label}, {n_groups} groups"
+        ax1.plot(sub["obs/group"], sub["divergences"], "o" + style, color=colour,
+                 label=tag, ms=5)
+        ax2.plot(sub["obs/group"], sub["ESS per 1k grads"], "o" + style,
+                 color=colour, label=tag, ms=5)
 ax1.set(title="Divergences", xlabel="observations per group", xscale="log",
-        ylabel="count")
-ax1.legend()
+        yscale="symlog", ylabel="count")
+ax1.legend(fontsize=8)
 ax2.set(title="Efficiency", xlabel="observations per group", xscale="log",
-        ylabel=r"ESS($\tau$) per 1k gradients")
-ax2.legend()
+        yscale="log", ylabel=r"ESS($\tau$) per 1k gradients")
+ax2.legend(fontsize=8)
 fig.tight_layout()
 
 # %% [markdown]
+# Read the right-hand panel first, and note the **log** vertical axis. The two
+# curves cross almost immediately — non-centered wins only in the sparsest
+# column, at one observation per group — and then they separate by orders of
+# magnitude. By 1000 observations per group, centering is worth a **hundredfold
+# to two-hundredfold** difference in ESS per unit of work, depending on panel
+# size. The far end of this sweep is not a curiosity; it is where a lot of real
+# cognitive data sits.
+#
+# Now the left panel, which is interesting for a different reason.
+#
 # <details class="sbi-note">
 # <summary>📝 <b>The rule, stated properly</b></summary>
 #
@@ -432,36 +460,80 @@ fig.tight_layout()
 #
 # </details>
 #
+# <details class="sbi-key" open>
+# <summary>🔑 <b>More groups suppresses the divergences without fixing the efficiency</b></summary>
+#
+# Compare the solid lines (8 groups) with the dashed ones (24). Divergences
+# largely **disappear** on the bigger panel: the centered fit at one observation
+# per group falls from 236 divergences to 6, and the non-centered fit's
+# complaints at the data-rich end (10, 13, 13) drop to (0, 0, 2).
+#
+# That is not the geometry being repaired. It is exactly Betancourt's remark,
+# which you can now read off a figure rather than take on trust: **more groups
+# means more information about $\tau$, which trims off the extreme values of
+# $\tau$ where the pathology lives.**
+#
+# The efficiency panel keeps the same shape and the same ordering throughout. So
+# a clean divergence count is *not* evidence that you chose the right
+# parameterization — it may only mean you had enough groups to hide the
+# consequences of choosing the wrong one. Judge by ESS per gradient, and let
+# divergences tell you about correctness rather than about cost.
+#
+# </details>
+#
 # ### What that looks like in the geometry
 #
 # The ESS curves say *that* the advantage reverses. This says *why*. Four fits —
 # both parameterizations, at weak and strong data — each plotted in the
 # coordinates its own sampler actually works in, against $\log\tau$, with
 # divergences overlaid.
+#
+# The panel here is deliberately larger than the eight-schools dataset this
+# demonstration is traditionally built on. **The group count is itself a knob on
+# the geometry**: every group contributes one $\theta$ that has to pass through
+# the same neck, so a centered sampler on 32 groups is threading 32 coordinates
+# at once rather than eight. Measured on this panel, weak likelihood, centered:
+#
+# | groups | divergences | ESS($\tau$) |
+# |---|---|---|
+# | 8 | 346 | 390 |
+# | 16 | 333 | 163 |
+# | 32 | 670 | 67 |
+# | 64 | 1038 | 11 |
+#
+# The non-centered fit stays healthy across all of them. Eight groups is enough
+# to *see* the problem; more makes it unmissable.
 
 # %%
 geom = F.geometry_experiment(seed=RANDOM_SEED)
+print(f"{geom['n_groups']} groups")
 F.fig_geometry_grid(geom)
 
 # %%
-print(f"{'parameterization':16s} {'se scale':>9s} {'divergences':>12s} {'min log tau':>12s}")
+print(f"{'parameterization':16s} {'se scale':>9s} {'divergences':>12s} "
+      f"{'min log tau':>12s} {'ESS(tau)':>10s}")
 for (scale, par), d in geom["results"].items():
-    print(f"{par:16s} {scale:9g} {d['n_divergences']:12d} {d['min_log_tau']:12.2f}")
+    print(f"{par:16s} {scale:9g} {d['n_divergences']:12d} "
+          f"{d['min_log_tau']:12.2f} {d['ess_tau']:10.1f}")
 
 # %% [markdown]
 # Read the four panels as a 2×2, and note that **the two panels in each row
 # share a $\log\tau$ axis** — that is what makes the comparison honest.
 #
 # **Top row (weak likelihood).** The centered chain simply *stops* around
-# $\log\tau \approx -0.3$, with its divergences piled against that floor. The
-# non-centered chain, on the same axis, carries on down past $-6$. The centered
-# sampler is not exploring the neck badly — it is not exploring it at all, and
-# it reports $\hat{R} \approx 1$ while failing.
+# $\log\tau \approx -0.9$, with hundreds of divergences piled against that floor.
+# The non-centered chain, on the same axis, carries on down past $-6$. The
+# centered sampler is not exploring the neck badly — it is not exploring it at
+# all, and it reports $\hat{R} \approx 1$ while failing. The ESS column is the
+# blunt version: **67 against 3491**, a fifty-fold difference from a change of
+# coordinates alone.
 #
-# **Bottom row (strong likelihood).** Centered is now clean: zero divergences,
-# a round blob. Non-centered has developed a hard **diagonal ridge** — to hold
-# $\theta_g$ where the data wants it while $\tau$ grows, $z_g$ must shrink.
-# That is the inverted funnel, and it is why the advice reverses.
+# **Bottom row (strong likelihood).** Centered is now clean — zero divergences,
+# a round blob. Non-centered has developed a hard **diagonal ridge**: to hold
+# $\theta_g$ where the data wants it while $\tau$ grows, $z_g$ must shrink. That
+# is the inverted funnel, and it is why the advice reverses. Here neither fit
+# diverges, so the divergence count tells you nothing and the ESS column tells
+# you everything — **18378 against 196**, now favouring centered.
 #
 # <details class="sbi-note">
 # <summary>📝 <b>And yet non-centered is still the sensible default</b></summary>
@@ -478,10 +550,11 @@ for (scale, par), d in geom["results"].items():
 # <details class="sbi-warn" open>
 # <summary>⚠️ <b>Do not memorise the crossover point</b></summary>
 #
-# This sweep holds the **number of groups fixed at 8** and varies only the
-# observations within each. The crossover also moves with the number of groups,
-# the group-scale prior, and how much the groups actually differ — so "the
-# crossover is at 3 observations" is a fact about *this* setup, not a constant.
+# The crossover moves with the number of groups, the group-scale prior, and how
+# much the groups actually differ — so "the crossover is between 1 and 3
+# observations per group" is a fact about *this* setup, not a constant. You saw
+# one of those dependencies directly: changing only the panel size moved the
+# divergence counts substantially.
 #
 # What transfers is the *shape*: two curves that cross, and a rule for which
 # side you are on. Run the sweep on your own model rather than importing a
