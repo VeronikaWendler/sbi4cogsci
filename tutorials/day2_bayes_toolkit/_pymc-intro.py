@@ -419,6 +419,11 @@ plt.tight_layout()
 # wandering *around* that value rather than drifting toward it — a trace that
 # approaches the truth from one side and keeps going is a chain that has not
 # converged, and it looks completely healthy if you plot it without the line.
+#
+# Look at `sigma`: its truth sits well out in the **right tail**, not in the
+# middle. That is not a bug, and we come back to it below — with 60 observations
+# it is ordinary sampling variability. Notice, though, that you would have had no
+# way to see it at all without the line.
 
 # %% [markdown]
 # And the joint, which we will care about a great deal this afternoon.
@@ -774,11 +779,18 @@ fig.tight_layout()            # Format the layout tightly for clarity
 # MEAN band: push the coefficient draws through the line. No noise anywhere.
 ic_all = post_p["Intercept"].values.ravel()
 sl_all = post_p["x"].values.ravel()
+sd_all = post_p["sigma"].values.ravel()
 mu_draws = ic_all[:, None] + sl_all[:, None] * xs[None, :]      # (draws, grid)
 mu_lo, mu_mid, mu_hi = np.percentile(mu_draws, [5.5, 50, 94.5], axis=0)
 
-# RESPONSE band: PyMC draws actual y values, so sigma is baked in. Note it
-# predicts at the x values the model was BUILT with, not on our grid.
+# RESPONSE band, built BY HAND on the same grid so the two are comparable:
+# take each posterior line and scatter a point around it with that draw's sigma.
+# This is literally the definition, and doing it explicitly is the point.
+rng_pp = np.random.default_rng(RANDOM_SEED)
+y_new_draws = mu_draws + rng_pp.normal(0.0, 1.0, mu_draws.shape) * sd_all[:, None]
+y_lo, y_hi = np.percentile(y_new_draws, [5.5, 94.5], axis=0)
+
+# ...and the same thing from PyMC, at the x values the model was BUILT with.
 with regression:
     ppc_reg = pm.sample_posterior_predictive(idata_pymc, random_seed=RANDOM_SEED,
                                              progressbar=False)
@@ -788,26 +800,40 @@ y_pred = y_pred.reshape(-1, y_pred.shape[-1])
 lo, mid, hi = np.percentile(y_pred, [5.5, 50, 94.5], axis=0)
 order = np.argsort(x)
 
-fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
+fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.1))
 
-# Left: the mean band on its own, where the hourglass is visible.
+# (1) The mean band alone, zoomed so the hourglass is actually visible.
 ax = axes[0]
-ax.fill_between(xs, mu_lo, mu_hi, color=S.PRIMARY, alpha=0.35,
+ax.fill_between(xs, mu_lo, mu_hi, color=S.PRIMARY, alpha=0.40,
                 label="89% band for the MEAN")
-ax.plot(xs, mu_mid, color=S.PRIMARY, lw=2)
-ax.plot(x, y, "o", color=S.MUTED, ms=4, ls="none", label="data", zorder=3)
-ax.set(title="Where is the line?", xlabel="$x$", ylabel="$y$")
+ax.plot(xs, mu_mid, color=S.PRIMARY, lw=1.5)
+ax.plot(x, y, "o", color=S.MUTED, ms=3, ls="none", alpha=0.45, zorder=1)
+pad = 3.5 * (mu_hi - mu_lo).max()
+ax.set(title="Where is the line?", xlabel="$x$", ylabel="$y$",
+       ylim=(mu_mid.min() - pad, mu_mid.max() + pad))
 ax.legend(fontsize=9, loc="upper left")
 
-# Right: both, to scale.
+# (2) Both bands, to scale.
 ax = axes[1]
 ax.fill_between(x[order], lo[order], hi[order], color=S.ALT, alpha=0.25,
-                label="89% band for a NEW OBSERVATION")
-ax.fill_between(xs, mu_lo, mu_hi, color=S.PRIMARY, alpha=0.55,
-                label="89% band for the MEAN")
+                label="89% for a NEW OBSERVATION")
+ax.fill_between(xs, mu_lo, mu_hi, color=S.PRIMARY, alpha=0.60,
+                label="89% for the MEAN")
 ax.plot(x, y, "o", color=S.MUTED, ms=4, ls="none", label="data", zorder=3)
-ax.set(title="...versus where is the next data point?", xlabel="$x$")
+ax.set(title="...versus the next data point?", xlabel="$x$")
 ax.legend(fontsize=9, loc="upper left")
+
+# (3) The diagnostic: each band's width RELATIVE TO ITS OWN NARROWEST POINT.
+#     Both start at 1.0, so the comparison is about shape, not scale.
+ax = axes[2]
+w_mu = mu_hi - mu_lo
+w_y = y_hi - y_lo
+ax.plot(xs, w_mu / w_mu.min(), color=S.PRIMARY, lw=2.5, label="MEAN band")
+ax.plot(xs, w_y / w_y.min(), color=S.ALT, lw=2.5, label="RESPONSE band")
+S.truth_line(ax, 1.0, label="no flare at all")
+ax.set(title="How much does each band flare?", xlabel="$x$",
+       ylabel="width / narrowest width")
+ax.legend(fontsize=9)
 fig.tight_layout()
 
 # %% [markdown]
@@ -826,33 +852,65 @@ centre = np.argmin(np.abs(xs))                 # grid point nearest x = 0
 edge = -1                                      # the largest x
 
 mean_w = mu_hi - mu_lo
-resp_w = (hi - lo)[order]
-x_sorted = x[order]
+resp_w = y_hi - y_lo                           # both on the same grid now
 
 print(f"{'':22s} {'at x ~ 0':>10s} {'at x = max':>12s} {'ratio':>8s}")
 print(f"{'mean band width':22s} {mean_w[centre]:10.3f} {mean_w[edge]:12.3f}"
       f" {mean_w[edge] / mean_w[centre]:8.2f}")
-print(f"{'response band width':22s} {resp_w[len(resp_w)//2]:10.3f} {resp_w[edge]:12.3f}"
-      f" {resp_w[edge] / resp_w[len(resp_w)//2]:8.2f}")
+print(f"{'response band width':22s} {resp_w[centre]:10.3f} {resp_w[edge]:12.3f}"
+      f" {resp_w[edge] / resp_w[centre]:8.2f}")
 
-# The variance decomposition that explains the ratio.
-sd_mu_centre = mu_draws[:, centre].std()
+# Sanity check: our hand-built response band and PyMC's should agree, since
+# they are the same definition. Compare at the observed x, where PyMC has one.
+pymc_w = np.interp(x[order], xs, resp_w)
+print(f"\nhand-built vs pm.sample_posterior_predictive band width: "
+      f"max gap {np.abs(pymc_w - (hi - lo)[order]).max():.3f}")
+
+# The variance decomposition, at both ends. Standard deviations add IN
+# QUADRATURE, which is the whole reason the flare gets flattened.
 sigma_hat = post_p["sigma"].values.mean()
-print(f"\nat x ~ 0:  sd of the mean = {sd_mu_centre:.3f},  sigma = {sigma_hat:.3f}")
-print(f"           total sd = sqrt({sd_mu_centre:.3f}^2 + {sigma_hat:.3f}^2) = "
-      f"{np.sqrt(sd_mu_centre**2 + sigma_hat**2):.3f}")
-print(f"           -> the noise contributes "
-      f"{sigma_hat**2 / (sd_mu_centre**2 + sigma_hat**2):.1%} of the variance")
+print(f"\nsigma = {sigma_hat:.3f}")
+print(f"\n{'':10s} {'sd of mean':>11s} {'total sd':>10s}   decomposition")
+for label, j in [("at x ~ 0", centre), ("at x = max", -1)]:
+    sd_mu = mu_draws[:, j].std()
+    total = np.sqrt(sd_mu**2 + sigma_hat**2)
+    print(f"{label:10s} {sd_mu:11.3f} {total:10.3f}   "
+          f"sqrt({sd_mu:.3f}^2 + {sigma_hat:.3f}^2)")
+
+sd_c, sd_e = mu_draws[:, centre].std(), mu_draws[:, -1].std()
+print(f"\nthe mean's sd grows {sd_e / sd_c:.2f}x from centre to edge,")
+print(f"but the total sd grows only "
+      f"{np.sqrt(sd_e**2 + sigma_hat**2) / np.sqrt(sd_c**2 + sigma_hat**2):.2f}x")
+print(f"-> at the centre, noise is "
+      f"{sigma_hat**2 / (sd_c**2 + sigma_hat**2):.1%} of the total variance")
 
 # %% [markdown]
-# There it is. The mean band genuinely does flare toward the edges. The response
-# band flares by the same *absolute* amount, but that amount is small next to
-# $\sigma$, so as a *fraction* of its own width it barely changes — which is why
-# it reads as a constant-width ribbon.
+# There it is — the third panel is the whole answer. The mean band's width more
+# than triples from centre to edge; the response band's sits flat on 1.0.
 #
-# This ratio is not a fixed fact about regression, it is a fact about **this**
-# dataset. With 120 points the mean is pinned down tightly; with 8 points the
-# hourglass would be plainly visible in the response band too. Worth trying.
+# The mechanism is worth stating exactly, because it is easy to get half-right.
+# The response band **does** inherit the flare, but **standard deviations combine
+# in quadrature**, not additively:
+#
+# $$
+# \operatorname{sd}\!\left(y^{\text{new}} \mid x\right)
+# = \sqrt{\operatorname{sd}(\mu(x))^2 + \sigma^2}.
+# $$
+#
+# When $\sigma$ is much the larger term, adding a small quantity under a square
+# root barely moves the result — which is why the ratios printed above differ so
+# sharply while describing the same underlying flare. The flare is not absent, it
+# is **algebraically suppressed**. So the suspicion that the wide band has
+# constant width is a good one, and the resolution is that it very nearly does,
+# for a reason.
+#
+# (The small wobble on the green curve is Monte Carlo noise in the percentiles,
+# not structure. More draws would flatten it further.)
+#
+# This is a fact about **this** dataset, not about regression. With 120 points
+# the mean is pinned down tightly. Re-run the fit with `N_DATA = 8` and the two
+# terms become comparable, at which point the hourglass is plainly visible in
+# the response band too — a worthwhile thing to try.
 
 # %% [markdown]
 # <details class="sbi-key" open>
@@ -1231,8 +1289,13 @@ fig.tight_layout()
 # | summarise | `az.summary(idata, kind="stats")` |
 # | first look | `az.plot_trace_dist(idata, combined=True)` |
 # | joint posterior | `az.plot_pair(idata, marginal=True, marginal_kind="kde")` |
+# | reach the `Dataset` | `idata.posterior.dataset` |
+# | reduce over draws | `post.mean(dim=["chain", "draw"])` |
+# | a posterior for a derived quantity | `post.assign(cv=post["sigma"] / post["mu"])` |
 # | check before fitting | `pm.sample_prior_predictive(...)` |
 # | check after fitting | `pm.sample_posterior_predictive(...)` |
+# | the band for the **mean** | percentiles of $\beta_0 + \beta_1 x$ over draws |
+# | the band for a **new observation** | `pm.sample_posterior_predictive` / bambi `kind="response"` |
 # | intervene | `pm.do(model, {var: value})` |
 # | the same, as a formula | `bmb.Model("y ~ 1 + x", data).fit()` |
 # | predict at new covariates | `bmb_model.predict(idata, data=new_df)` |

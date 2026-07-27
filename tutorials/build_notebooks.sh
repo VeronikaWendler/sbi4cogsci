@@ -17,10 +17,16 @@ cd "$(dirname "$0")"
 
 sources=("$@")
 if [ ${#sources[@]} -eq 0 ]; then
-  # bash 3.2 (macOS default) has no readarray
+  # Not every `_`-prefixed file is a notebook source: there are helper scripts
+  # (_precompute_ddm_grid.py, _bake_slide_figures.py) and a marimo file
+  # (_molab_probe.py) that jupytext either cannot read or should not execute.
+  # Select on the jupytext percent-format header instead of the filename, so
+  # this stays correct as files are added.
+  # bash 3.2 (macOS default) has no readarray.
   sources=()
   while IFS= read -r line; do sources+=("$line"); done \
-    < <(find . -name '_*.py' -not -path './.venv/*' | sort)
+    < <(grep -l 'format_name: percent' \
+          $(find . -name '_*.py' -not -path './.venv/*') | sort)
 fi
 
 for src in "${sources[@]}"; do
