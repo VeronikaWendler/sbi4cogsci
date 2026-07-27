@@ -214,7 +214,16 @@ def fig_pooling_error(result, *, split_at=30, ax=None):
 # --------------------------------------------------------------------------
 
 
-def _hier_normal(y_bar, se, *, parameterization):
+#: The eight-schools data (Rubin 1981). Used here because it is the canonical
+#: case where the funnel actually *manifests*: the school effects are small
+#: relative to their standard errors, so the posterior for tau extends right
+#: down to zero and the neck is reachable. Simulated panels where tau is
+#: genuinely non-zero push tau upward and the neck never appears.
+EIGHT_SCHOOLS_Y = np.array([28.0, 8.0, -3.0, 7.0, -1.0, 1.0, 18.0, 12.0])
+EIGHT_SCHOOLS_SE = np.array([15.0, 10.0, 16.0, 11.0, 9.0, 11.0, 10.0, 18.0])
+
+
+def _hier_normal(y, se, *, parameterization):
     """Hierarchical normal, centered or non-centered.
 
     A half-normal prior on tau, not a log-normal: a log-normal suppresses both
@@ -223,82 +232,86 @@ def _hier_normal(y_bar, se, *, parameterization):
     """
     import pymc as pm
 
-    n = y_bar.size
+    n = y.size
     with pm.Model() as model:
         mu = pm.Normal("mu", 0.0, 5.0)
         tau = pm.HalfNormal("tau", 5.0)
         if parameterization == "centered":
-            theta = pm.Normal("theta", mu, tau, shape=n)
-            pm.Deterministic("z", (theta - mu) / tau)
+            pm.Normal("theta", mu, tau, shape=n)
         else:
             z = pm.Normal("z", 0.0, 1.0, shape=n)
-            theta = pm.Deterministic("theta", mu + tau * z)
-        pm.Normal("y", theta, se, observed=y_bar)
+            pm.Deterministic("theta", mu + tau * z)
+        pm.Normal("y", model["theta"], se, observed=y)
     return model
 
 
-def geometry_experiment(obs_per_group=(1, 300), n_groups=8, true_tau=1.0,
-                        obs_sigma=1.0, draws=1500, tune=1500, chains=4, seed=0):
-    """Fit a hierarchical normal both ways, at a weak and a strong data regime.
+def geometry_experiment(se_scales=(1.0, 0.05), draws=2000, tune=2000,
+                        chains=4, seed=0):
+    """Fit eight schools both ways, at two data strengths.
 
-    Returns a dict keyed by (obs_per_group, parameterization) holding the draws
-    needed to draw the geometry: the group parameter in *its own* coordinates,
-    log tau, and the divergence mask.
+    `se_scales` multiplies the standard errors: 1.0 is the real data (weak
+    likelihood, prior dominates) and a small value makes each school's own
+    estimate precise (likelihood dominates). Varying the observation scale is
+    exactly the manipulation Betancourt & Girolami use for their Figure 8.
     """
     import pymc as pm
 
-    rng = np.random.default_rng(seed)
-    theta_true = rng.normal(0.0, true_tau, n_groups)
-
     out = {}
-    for n_obs in obs_per_group:
-        se = obs_sigma / np.sqrt(n_obs)
-        y_bar = rng.normal(theta_true, se)
+    for scale in se_scales:
+        se = EIGHT_SCHOOLS_SE * scale
         for par in ("centered", "non-centered"):
-            with _hier_normal(y_bar, np.full(n_groups, se), parameterization=par):
+            with _hier_normal(EIGHT_SCHOOLS_Y, se, parameterization=par):
                 idata = pm.sample(draws=draws, tune=tune, chains=chains, cores=1,
                                   nuts_sampler="pymc", progressbar=False,
                                   random_seed=seed)
             post = idata.posterior.dataset
-            # Plot each parameterization in the coordinates the SAMPLER works in:
-            # theta for centered, z for non-centered. That is the whole point —
-            # the geometry is a property of the coordinates, not the model.
+            # Plot each parameterization in the coordinates its own SAMPLER
+            # works in — theta for centered, z for non-centered. The geometry is
+            # a property of the coordinates, not of the model.
             coord = "theta" if par == "centered" else "z"
-            out[(n_obs, par)] = {
+            log_tau = np.log(post["tau"].values.ravel())
+            out[(scale, par)] = {
                 "coord_name": coord,
-                "coord": post[coord].values.reshape(-1, n_groups)[:, 0],
-                "log_tau": np.log(post["tau"].values.ravel()),
+                "coord": post[coord].values.reshape(log_tau.size, -1)[:, 0],
+                "log_tau": log_tau,
                 "diverging": idata.sample_stats["diverging"].values.ravel(),
                 "n_divergences": int(idata.sample_stats["diverging"].values.sum()),
+                "min_log_tau": float(log_tau.min()),
             }
-    return {"results": out, "obs_per_group": tuple(obs_per_group)}
+    return {"results": out, "se_scales": tuple(se_scales)}
 
 
-def fig_geometry_grid(experiment, figsize=(10.5, 7.0)):
-    """2x2: parameterization across columns, data strength down rows.
+def fig_geometry_grid(experiment, figsize=(11.0, 7.2)):
+    """2x2: parameterization across columns, likelihood strength down rows.
 
-    Top-left funnels downward; bottom-right funnels *upward*. That inversion is
-    the reversal, and it is why "always non-center" is wrong.
+    The y-axis is **shared within each row**, which is the whole point: in the
+    weak-data row the centered chain simply stops, while the non-centered one
+    carries on orders of magnitude further down. You are looking for where the
+    blue points *end*, not only for their shape.
     """
     import matplotlib.pyplot as plt
 
-    res, obs = experiment["results"], experiment["obs_per_group"]
+    res, scales = experiment["results"], experiment["se_scales"]
     fig, axes = plt.subplots(2, 2, figsize=figsize)
-    for r, n_obs in enumerate(obs):
+    for r, scale in enumerate(scales):
+        row = [res[(scale, p)] for p in ("centered", "non-centered")]
+        lo = min(d["log_tau"].min() for d in row) - 0.3
+        hi = max(d["log_tau"].max() for d in row) + 0.3
         for c, par in enumerate(("centered", "non-centered")):
-            ax, d = axes[r, c], res[(n_obs, par)]
+            ax, d = axes[r, c], res[(scale, par)]
             ax.plot(d["coord"], d["log_tau"], "o", color=S.PRIMARY, ms=1.8,
-                    alpha=0.20, ls="none")
+                    alpha=0.18, ls="none")
             if d["diverging"].any():
                 S.divergences(ax, d["coord"][d["diverging"]],
                               d["log_tau"][d["diverging"]], label=None)
-            strength = "weak" if n_obs == min(obs) else "strong"
+            ax.set_ylim(lo, hi)                      # shared within the row
+            strength = "weak likelihood" if scale == max(scales) else "strong likelihood"
             symbol = r"\theta" if d["coord_name"] == "theta" else "z"
-            ax.set(title=f"{par}, {strength} data "
-                         f"({n_obs} obs/group, {d['n_divergences']} div.)",
+            ax.set(title=f"{par} — {strength}\n"
+                         f"{d['n_divergences']} divergences, "
+                         f"reaches $\\log\\tau$ = {d['min_log_tau']:.1f}",
                    xlabel=f"${symbol}_1$",
                    ylabel=r"$\log \tau$" if c == 0 else "")
-    fig.suptitle("The pathology swaps corners as the data gets stronger", y=1.0)
     fig.tight_layout()
     return fig
 

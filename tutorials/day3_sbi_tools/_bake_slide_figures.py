@@ -44,12 +44,13 @@ def main():
     save(F.fig_shrinkage(result), "shrinkage.png")
     save(F.fig_pooling_error(result), "pooling_error.png")
 
-    print("geometry experiment (four MCMC fits, ~11s) ...")
+    print("geometry experiment (four MCMC fits, ~25s) ...")
     geom = F.geometry_experiment(seed=SEED)
     save(F.fig_geometry_grid(geom), "geometry.png")
-    print("  divergence counts (the reversal, in one table):")
-    for (n_obs, par), d in geom["results"].items():
-        print(f"    {par:13s} {n_obs:4d} obs/group -> {d['n_divergences']:4d} divergences")
+    print("  the reversal, in one table:")
+    for (scale, par), d in geom["results"].items():
+        print(f"    {par:13s} se x{scale:<5g} -> {d['n_divergences']:4d} divergences,"
+              f"  reaches log tau {d['min_log_tau']:6.2f}")
 
     s = F.pooling_summary(result)
     print("\nnumbers quoted on the slides — keep them in sync:")

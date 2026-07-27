@@ -431,19 +431,24 @@ geom = F.geometry_experiment(seed=RANDOM_SEED)
 F.fig_geometry_grid(geom)
 
 # %%
-print(f"{'parameterization':16s} {'obs/group':>10s} {'divergences':>12s}")
-for (n_obs, par), d in geom["results"].items():
-    print(f"{par:16s} {n_obs:10d} {d['n_divergences']:12d}")
+print(f"{'parameterization':16s} {'se scale':>9s} {'divergences':>12s} {'min log tau':>12s}")
+for (scale, par), d in geom["results"].items():
+    print(f"{par:16s} {scale:9g} {d['n_divergences']:12d} {d['min_log_tau']:12.2f}")
 
 # %% [markdown]
-# Read the four panels as a 2×2. **Top-left**: the classic funnel, pinching
-# downward, divergences packed into the neck. **Bottom-right**: the mirror
-# image — an *inverted* funnel, where holding $\theta_g$ fixed while $\tau$
-# grows forces $z_g$ to shrink, and the divergences sit at the **top**.
+# Read the four panels as a 2×2, and note that **the two panels in each row
+# share a $\log\tau$ axis** — that is what makes the comparison honest.
 #
-# The diagonal is the lesson. Centered is catastrophic with weak data and
-# flawless with strong data; non-centered does not improve as data accumulates,
-# it gets slightly worse.
+# **Top row (weak likelihood).** The centered chain simply *stops* around
+# $\log\tau \approx -0.3$, with its divergences piled against that floor. The
+# non-centered chain, on the same axis, carries on down past $-6$. The centered
+# sampler is not exploring the neck badly — it is not exploring it at all, and
+# it reports $\hat{R} \approx 1$ while failing.
+#
+# **Bottom row (strong likelihood).** Centered is now clean: zero divergences,
+# a round blob. Non-centered has developed a hard **diagonal ridge** — to hold
+# $\theta_g$ where the data wants it while $\tau$ grows, $z_g$ must shrink.
+# That is the inverted funnel, and it is why the advice reverses.
 #
 # ::: {.callout-note}
 # ## And yet non-centered is still the sensible default

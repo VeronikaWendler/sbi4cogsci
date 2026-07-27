@@ -7,6 +7,11 @@ format:
     theme: simple
     slide-number: true
     incremental: false
+    # Content was overflowing the bottom of the screen. `smaller` drops the base
+    # font so more fits, and `scrollable` means anything that still overflows
+    # can be scrolled rather than silently cut off.
+    smaller: true
+    scrollable: true
     # Deliberately NOT embed-resources: in a website project Quarto ships
     # reveal.js into _site/site_libs anyway, so embedding just duplicates ~4 MB
     # per deck. For a portable single file to present from offline, render this
@@ -39,14 +44,23 @@ $$p(\theta \mid y) \;=\; \frac{p(y \mid \theta)\, p(\theta)}{p(y)}$$
 
 . . .
 
-With $G$ participants, **the whole argument is about $p(\theta)$**:
+With $G$ participants and trials $i$ within each, **the whole argument is about
+$p(\theta)$**:
 
 $$
 p(\theta_{1:G},\, \phi \mid y) \;\propto\;
-\underbrace{\prod_{g} p(y_g \mid \theta_g)}_{\text{likelihood}}\;
-\underbrace{\prod_{g} p(\theta_g \mid \phi)}_{\text{population}}\;
-\underbrace{p(\phi)}_{\text{hyperprior}}
+\prod_{g=1}^{G} \prod_{i=1}^{n_g} p(y_{gi} \mid \theta_g)
+\;\cdot\;
+\prod_{g=1}^{G} p(\theta_g \mid \phi)
+\;\cdot\;
+p(\phi)
 $$
+
+| term | what it is |
+|---|---|
+| $\prod_g \prod_i p(y_{gi} \mid \theta_g)$ | **likelihood** — trial $i$ of participant $g$ |
+| $\prod_g p(\theta_g \mid \phi)$ | **population** — where participants come from |
+| $p(\phi)$ | **hyperprior** |
 
 ## The same equation, three ways
 
@@ -135,6 +149,36 @@ The panel you just saw, counted naively:
 Partial pooling has **more** parameters *and* generalised better. Either
 Occam is wrong, or we are counting the wrong thing.
 
+## First: what is `p_loo`?
+
+An **estimate of how many parameters your model is effectively using**, and it
+is measured, not counted.
+
+. . .
+
+The idea: compare how well the model predicts the data it **was fitted on**
+against how well it predicts data it **has not seen** (estimated by
+leave-one-out cross-validation):
+
+$$p_{\text{loo}} \;=\; \text{(fit to the data you have)} \;-\;
+  \text{(predicted fit to data you do not)}$$
+
+. . .
+
+A model that is very flexible fits what it saw much better than what it did
+not — a **big gap**. A rigid model fits both about equally — a **small gap**.
+That gap is the price of flexibility, denominated in parameters.
+
+::: {.callout-note}
+## Two useful facts
+For a simple model with flat priors, `p_loo` lands near the actual parameter
+count. Anything that **constrains** parameters — a prior, or a hierarchy —
+pushes it below.
+
+In ArviZ: `az.loo(idata)`. Note the attribute is `.p`, though it *prints* as
+`p_loo`.
+:::
+
 ## Count what the parameters cost, not how many there are
 
 `p_loo` — the **effective** number of parameters — measured on those exact two
@@ -169,12 +213,9 @@ $$\text{2 hyperparameters} \;\longrightarrow\; \text{20 parameters that each cos
 
 . . .
 
-::: {.callout-note}
-## Not just our example
-McElreath's tadpole model: **50** nominal parameters, **20.9** effective —
-against **48** nominal and **26.2** effective for no pooling. Two more
-nominal, five fewer effective, and a substantially better predictive score.
-:::
+You could have written a tight prior on $v_g$ by hand and got the same
+regularisation. You would have had to **guess its width**. The hierarchy
+estimates that width from the data instead.
 
 ## An honest footnote on `p_loo`
 
@@ -226,12 +267,18 @@ global step size has to serve both.
 
 ## Poll
 
-> A hierarchical model reports $\hat{R} = 1.00$ and ESS in the thousands,
-> with 40 divergences. What should you conclude?
->
+> Your hierarchical model reports $\hat{R} = 1.00$ and ESS in the thousands,
+> with 40 divergences. Inspecting the posteriors, you notice there seems to be
+> a **funnel shape**. What should you conclude?
+
+. . .
+
 > **A.** It converged; divergences are a performance warning.
+>
 > **B.** Run it longer.
+>
 > **C.** Raise `target_accept` until they go away, then trust it.
+>
 > **D.** The estimates may be biased, and none of the above fixes that.
 
 . . .
@@ -305,20 +352,33 @@ must shrink.
 
 ![](figures/geometry.png)
 
-## Same picture, as one number
+## Look at where the blue points *stop*
 
-Divergences, from the four fits above:
+Both top panels share a $\log\tau$ axis. The centered chain gives up at
+$\log\tau \approx -0.3$; the non-centered one carries on to $-6.9$.
 
-| | centered | non-centered |
+| weak likelihood | centered | non-centered |
 |---|---|---|
-| **1 obs / group** | **350** | 12 |
-| **300 obs / group** | **0** | 16 |
+| divergences | **346** | 13 |
+| reaches $\log\tau$ | $-0.3$ | $\mathbf{-6.9}$ |
 
 . . .
 
-Read along each row. Centered goes from catastrophic to perfect as the data
-strengthens. Non-centered goes the **other way** — slightly worse with more
-data, not better.
+**The centered chain is not sampling the neck badly. It is not sampling it at
+all** — and it reports $\hat{R} \approx 1$ while doing so.
+
+## Now strengthen the likelihood
+
+| strong likelihood | centered | non-centered |
+|---|---|---|
+| divergences | **0** | 2 |
+
+. . .
+
+Centered went from 346 divergences to **zero**. Non-centered went from 13 to
+2 — but look at its panel: $z_1$ and $\log\tau$ are now on a hard **diagonal
+ridge**. To keep $\theta_g$ where the data wants it while $\tau$ grows, $z_g$
+must shrink. That is the inverted funnel.
 
 ::: {.callout-note}
 ## Why non-centered is still the usual default
@@ -328,6 +388,7 @@ pathological behavior is the worst exactly when the partial pooling is
 strongest."* So the reversal is real, but it usually costs efficiency rather
 than correctness.
 :::
+
 
 ## The case we are not going to solve today
 
@@ -364,16 +425,33 @@ the model. Come and ask if you have data like this, because you probably do.
 
 ## Which is why you want it per parameter
 
-A real SSM has both kinds in one model:
+The rule is *per random effect*, and one SSM can hold several that disagree —
+because **different parameters are informed by different amounts of data**,
+even from the very same trials.
 
-- drift `v` — hundreds of trials per participant → **likelihood dominates**
-- a group-level scale over 14 participants → **prior dominates**
+::: {.incremental}
+- **Drift $v$** is informed by *every* trial: each choice and each RT speaks
+  to it. Hundreds of trials per participant → **likelihood dominates** →
+  centered.
+- **Boundary $a$** is identified mostly through the speed–accuracy
+  relationship, so it needs *variation* rather than volume — far fewer
+  effective observations → **prior dominates** → non-centered.
+- **A condition effect** present on only a fraction of trials has effectively
+  that fraction of the data → **non-centered**.
+:::
 
 . . .
+
+Same participants, same trials, different answers:
 
 ```python
 hssm.HSSM(..., noncentered={"v": False, "a": True})
 ```
+
+. . .
+
+The heuristic is not "how many trials" but **"how much of the data actually
+speaks to this parameter"**.
 
 ## Where we are going
 
