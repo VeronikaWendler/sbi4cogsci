@@ -354,11 +354,15 @@ print(pd.DataFrame({k: discrepancy(v) for k, v in preds_all.items()}).T
 for name, idata in [("1: flat", idata_flat),
                     ("2: drift by coherence", idata_drift),
                     ("3: drift + boundary", idata_both)]:
-    loo = az.loo(idata)
-    k = loo.pareto_k.values
-    bad = int((k > 0.7).sum())
-    print(f"{name:24s} elpd_loo = {float(loo.elpd):9.1f}   "
-          f"p_loo = {float(loo.p):6.1f}   Pareto k > 0.7: {bad:3d}/{k.size}")
+    try:
+        loo = az.loo(idata)
+        k = loo.pareto_k.values
+        bad = int((k > 0.7).sum())
+        print(f"{name:24s} elpd_loo = {float(loo.elpd):9.1f}   "
+              f"p_loo = {float(loo.p):6.1f}   Pareto k > 0.7: {bad:3d}/{k.size}")
+    except Exception as exc:
+        # Not defensive programming for its own sake — see the callout below.
+        print(f"{name:24s} LOO FAILED: {type(exc).__name__}: {exc}")
 
 # %% [markdown]
 # ::: {.callout-warning}
@@ -368,11 +372,13 @@ for name, idata in [("1: flat", idata_flat),
 # The Pareto $k$ diagnostic detects when it fails, and values above about 0.7
 # mean the estimate for that point is not to be trusted.
 #
-# Look at model 1. Its `p_loo` — nominally the effective number of parameters —
-# comes out at several hundred, for a model with **four**. That is not a
-# surprising discovery about the model; it is LOO telling you it could not do
-# its job, because a grossly misspecified model makes some observations
-# extremely surprising and those points then dominate the importance weights.
+# Look at what model 1 did. Depending on the draw it either reports a `p_loo` —
+# nominally the effective number of parameters — of several hundred for a model
+# with **four**, or it fails outright with `All tail values are the same`.
+# Neither is a discovery about the model; both are LOO telling you it could not
+# do its job. A grossly misspecified model makes some observations so
+# surprising that those points dominate the importance weights, and the Pareto
+# fit that LOO relies on has nothing left to work with.
 #
 # So: use LOO to separate *plausible* models from each other, and use posterior
 # predictive plots to reject the implausible ones. Do not ask LOO to rank a

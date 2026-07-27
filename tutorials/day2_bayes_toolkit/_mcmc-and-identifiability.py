@@ -211,7 +211,8 @@ for s in [0.05, 0.5, 1.5, 5.0, 20.0]:
     ch, a = metropolis(log_target_mixture, start=[0.0], step_size=s,
                        n_steps=20_000, seed=RANDOM_SEED)
     x = ch[2000:, 0]
-    ess = float(az.ess(az.from_dict({"x": x[None, :]}), var_names=["x"]).x)
+    ess = float(az.ess(az.convert_to_datatree({"x": x[None, :]}),
+                       var_names=["x"]).x)
     rows.append({"step_size": s, "acceptance": a, "ESS": ess,
                  "ESS/draw": ess / x.size})
 print(pd.DataFrame(rows).to_string(index=False, float_format=lambda v: f"{v:9.3f}"))
@@ -298,11 +299,10 @@ fig.suptitle("Every parameter pair, both designs", y=1.02)
 # push toward one boundary).
 #
 # In the extreme design **everything correlates with everything**, and the
-# dominant pair is not the one people usually name:
-#
-# $$
-# \operatorname{corr}(v, t) \approx -0.99 .
-# $$
+# strongest pair is not the one people usually name. It is not $v$ with $a$ —
+# it is $v$ with $t$, the drift rate against the non-decision time. (Read the
+# actual number off the matrix above; how extreme it gets varies from dataset
+# to dataset, but the *pattern* does not.)
 #
 # The mechanism is simple once stated. With essentially no errors, the choices
 # carry no information at all — every trial went the same way — so the *only*
@@ -349,11 +349,17 @@ print(f"\ntrue v in the extreme design: {TRUE['v_extreme']}")
 # %% [markdown]
 # ::: {.callout-important}
 # ## High accuracy is bad data for parameter estimation
-# This is the counterintuitive headline. The near-perfect dataset gives a drift
-# posterior an order of magnitude wider, biased well away from the truth, and
-# lying along a ridge with non-decision time. Nothing is wrong with the sampler
-# and nothing is wrong with the model — **the experiment did not collect the
-# information**.
+# This is the counterintuitive headline. Compare the two rows above: the
+# near-perfect dataset gives posteriors several times wider on every parameter,
+# lying along a ridge rather than filling a blob. Nothing is wrong with the
+# sampler and nothing is wrong with the model — **the experiment did not
+# collect the information**.
+#
+# Whether the point estimates also come out *biased* varies from dataset to
+# dataset, which is itself worth noticing: on a ridge, where the posterior mean
+# lands depends on where the prior and the little remaining information happen
+# to pull it. Sometimes you get lucky. You cannot tell from one fit which case
+# you are in — that is the problem.
 #
 # Lüken, Heathcote, Haaf & Matzke (2025, *Psychonomic Bulletin & Review*
 # 32(3):1411–1424) study this systematically and recommend designing for error
@@ -370,7 +376,7 @@ print(f"\ntrue v in the extreme design: {TRUE['v_extreme']}")
 # <details>
 # <summary>Answer</summary>
 #
-# `a`–`t`, at about **-0.65**, with `v`–`z` close behind at about **-0.61**.
+# `a`–`t` and `v`–`z` — read the exact values off the matrix you just plotted.
 #
 # Both are interpretable. Boundary separation and non-decision time both make
 # responses slower, so raising one and lowering the other keeps mean RT roughly
@@ -378,10 +384,9 @@ print(f"\ntrue v in the extreme design: {TRUE['v_extreme']}")
 # point both push the process toward the upper boundary, so they compete to
 # explain the choice proportion.
 #
-# Notice that `v`–`a`, the pair people most often name, is only about **+0.20**
-# here — and even in the extreme design it is +0.74, well behind `v`–`t`. It is
-# worth checking which parameters actually trade off in *your* fit rather than
-# assuming.
+# Notice how far down the list `v`–`a` sits — the pair people most often name is
+# not the one doing the damage in either design. Check which parameters actually
+# trade off in *your* fit rather than assuming.
 #
 # </details>
 

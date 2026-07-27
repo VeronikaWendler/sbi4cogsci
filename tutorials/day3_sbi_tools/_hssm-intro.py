@@ -101,7 +101,7 @@ gen_model = hssm.HSSM(
 
 TRUE = {
     "v_Intercept": 0.6, "v_theta": 0.9,
-    "a_Intercept": 1.1, "a_C(cond)[hard]": 0.7,
+    "a_Intercept": 1.1, "a_C(cond)": 0.7,     # contrast for "hard" vs the "easy" reference
     "z": 0.5, "t": 0.30,
 }
 
@@ -293,7 +293,7 @@ model_reg.sample(draws=500, tune=500, chains=2, cores=1,
                  random_seed=RANDOM_SEED, progressbar=False)
 print(az.summary(model_reg.traces,
                  var_names=["v_Intercept", "v_theta", "a_Intercept",
-                            "a_C(cond)[hard]", "z", "t"],
+                            "a_C(cond)", "z", "t"],
                  kind="stats").to_string())
 print("\nTRUE:", {k: v for k, v in TRUE.items()})
 
@@ -369,7 +369,7 @@ model_hier.sample(draws=500, tune=500, chains=2, cores=1,
                   random_seed=RANDOM_SEED, progressbar=False)
 print(az.summary(model_hier.traces,
                  var_names=["v_Intercept", "v_theta", "v_1|participant_id_sigma",
-                            "a_Intercept", "a_C(cond)[hard]"],
+                            "a_Intercept", "a_C(cond)"],
                  kind="stats").to_string())
 
 # %% [markdown]
