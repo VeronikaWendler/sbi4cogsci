@@ -115,7 +115,7 @@ print("pymc", pm.__version__, "| arviz", az.__version__, "| bambi", bmb.__versio
 # <details class="sbi-warn" open>
 # <summary>⚠️ <b>Read this before you copy code off the internet</b></summary>
 #
-# **ArviZ 1.0 (May 2026) was a breaking release.** `az.plot_posterior`,
+# **ArviZ v1.0 (May 2026) was a breaking release.** `az.plot_posterior`,
 # `az.plot_ppc`, `az.plot_density`, `az.plot_kde` and `az.waic` **no longer
 # exist**. `az.plot_trace` still exists but now draws *traces only*. The default
 # credible interval changed from a 94% HDI to an **89% ETI**, so even printed
@@ -311,7 +311,7 @@ list(idata.children)
 idata["posterior"].dataset
 
 # %% [markdown]
-# ### The gotcha that costs everyone twenty minutes
+# ### Data Structures that can cause confusion
 #
 # `idata.posterior` is a **DataTree node**, not a `Dataset`. Most `xarray`
 # operations you want live on the `Dataset`, so reach through `.dataset`:
@@ -345,12 +345,13 @@ print(post.mean(dim=["chain", "draw"]))
 print("chain 2, last 5 draws of mu:",
       post["mu"].sel(chain=2).isel(draw=slice(-5, None)).values.round(3))
 
-# Per-chain means — the manual version of the check R-hat automates for you.
+# %%
+# 3. PER-CHAIN MEANS
 print("\nmean of mu within each chain:")
 print(post["mu"].mean(dim="draw").to_series().round(3).to_string())
 
 # %%
-# 3. DERIVED QUANTITIES ARE FREE, and stay labelled. Any function of the
+# 4. DERIVED QUANTITIES ARE FREE, and stay labelled. Any function of the
 #    parameters has a posterior too, and you get it by transforming the draws --
 #    no re-fitting, no delta method, no reshaping.
 derived = post.assign(
@@ -360,7 +361,7 @@ derived = post.assign(
 print(az.summary(derived, var_names=["cv", "z_score"], kind="stats").to_string())
 
 # %%
-# 4. QUANTILES ALONG NAMED DIMS. `az.summary` is the convenient path, but the
+# 5. QUANTILES ALONG NAMED DIMS. `az.summary` is the convenient path, but the
 #    raw xarray call is there when you want something it does not offer.
 print(post.quantile([0.055, 0.5, 0.945], dim=["chain", "draw"])
           .to_dataframe().round(3).to_string())
@@ -380,7 +381,7 @@ print(post.quantile([0.055, 0.5, 0.945], dim=["chain", "draw"])
 print(sorted(idata["sample_stats"].dataset.data_vars))
 
 # %% [markdown]
-# ## 3. Looking at a posterior with ArviZ 1.x
+# ## 3. Looking at a posterior
 
 # %%
 print(az.summary(idata, kind="stats").to_string())
@@ -400,7 +401,7 @@ print(az.summary(idata, kind="stats", ci_prob=0.94, ci_kind="hdi").to_string())
 trace = az.plot_trace_dist(idata, combined=True)
 plt.gcf().set_size_inches(9, 4.4)
 
-# ArviZ 1.x returns a PlotCollection rather than an array of Axes. `get_target`
+# ArviZ returns a PlotCollection rather than an array of Axes. `get_target`
 # takes the variable and the panel's coordinates and hands back the Axes, which
 # is how we draw anything ArviZ does not — here, the values we generated from.
 # The marginal panel wants a VERTICAL truth line (the x axis is the parameter);
@@ -412,24 +413,16 @@ for var, truth in [("mu", TRUE_MU), ("sigma", TRUE_SIGMA)]:
 plt.tight_layout()
 
 # %% [markdown]
-# Two panels, two different questions, and the truth line answers both.
-#
 # On the **left** it tells you whether the posterior actually covers the value
 # that generated the data. On the **right** it tells you whether the chains are
 # wandering *around* that value rather than drifting toward it — a trace that
 # approaches the truth from one side and keeps going is a chain that has not
-# converged, and it looks completely healthy if you plot it without the line.
-#
-# Look at `sigma`: its truth sits well out in the **right tail**, not in the
-# middle. That is not a bug, and we come back to it below — with 60 observations
-# it is ordinary sampling variability. Notice, though, that you would have had no
-# way to see it at all without the line.
+# converged.
 
 # %% [markdown]
-# And the joint, which we will care about a great deal this afternoon.
-# `az.plot_pair` gives the marginals on the diagonal and the joint off it.
-# `marginal_kind="kde"` smooths the marginals into densities rather than
-# histograms.
+# And the joint, `az.plot_pair` gives the marginals on the diagonal 
+# and the joint off it. `marginal_kind="kde"` smooths the marginals 
+# into densities rather than histograms.
 
 # %%
 pair = az.plot_pair(idata, var_names=["mu", "sigma"],
@@ -900,7 +893,7 @@ print(f"-> at the centre, noise is "
 # When $\sigma$ is much the larger term, adding a small quantity under a square
 # root barely moves the result — which is why the ratios printed above differ so
 # sharply while describing the same underlying flare. The flare is not absent, it
-# is **algebraically suppressed**. So the suspicion that the wide band has
+# is ** suppressed**. So the suspicion that the wide band has
 # constant width is a good one, and the resolution is that it very nearly does,
 # for a reason.
 #
@@ -1031,26 +1024,9 @@ ax.legend(fontsize=9, loc="upper left")
 fig.tight_layout()
 
 # %% [markdown]
-# ### These really are the same computation
-#
-# It is fair to be suspicious that bambi is doing something subtly different
-# from the PyMC call. It is not — so check rather than trust. Line up bambi's
-# response band against the one `pm.sample_posterior_predictive` produced for
-# the hand-written model, on the same $x$ values:
-
-# %%
-band_gap = np.abs((hi_b - lo_b)[order] - (hi - lo)[order])
-print(f"largest disagreement between the two 89% response bands: {band_gap.max():.3f}")
-print(f"as a fraction of the band width:                         "
-      f"{band_gap.max() / (hi - lo)[order].mean():.1%}")
-print("\n(Both are simulating y ~ Normal(b0 + b1*x, sigma) from the posterior "
-      "draws.\n Any gap is Monte Carlo noise plus bambi's data-scaled priors, "
-      "not a\n different definition.)")
-
-# %% [markdown]
-# And now the part that mattered: **predicting out of sample.** Hand `predict` a
-# new dataframe and it does the rest — no `pm.Data`, no `set_data`, no rebuilding
-# the model.
+# ### Predicting out of sample.
+# Hand `predict` a new dataframe and it does the rest 
+# — no `pm.Data`, no `set_data`, no rebuilding the model.
 
 # %%
 # Deliberately extrapolate beyond the observed range of x.
@@ -1264,50 +1240,12 @@ fig.tight_layout()
 # 1. **A distribution is used two ways.** `pm.Normal.dist(...)` is a value you
 #    can draw from and take `logp` of. `pm.Normal("name", ...)` inside a model
 #    context is a **node in a graph**, and the name is how you get results back.
-# 2. **You are building a graph, not running code.** PyTensor differentiates and
-#    compiles it — the same machinery as a deep learning framework, aimed at a
-#    posterior instead of a loss.
-# 3. **`pm.sample()` returns an `xarray.DataTree`.** `idata.posterior` is a tree
-#    *node*; reach through `.dataset` when you want Dataset behaviour — and then
-#    every `xarray` reduction, selection and derived quantity is available to you.
-# 4. **Look at the joint, not just the marginals**, and mark ground truth
-#    whenever you have it.
-# 5. **Prior → posterior and prior predictive → posterior predictive** are the
-#    two pictures that show what conditioning did, in parameter space and in
-#    data space. Know which uncertainty each band carries.
+# 2. **You are building a graph, behind the scenes.** PyTensor allows you to compile 
+#    the graph into multiple backend frameworks.
+# 3. **Bambi** is a front-end to PyMC that makes specifying hierarchical mixed-effects
+#    regressions much easier. It is, in turn, the primary backend for HSSM.
 #
 # </details>
 #
-# ### Quick reference
-#
-# | want to | call |
-# |---|---|
-# | draw from a distribution | `pm.draw(pm.Normal.dist(0, 1), draws=n)` |
-# | evaluate a log-density | `pm.logp(dist, values).eval()` |
-# | see the model structure | `pm.model_to_graphviz(model)` |
-# | fit | `pm.sample(...)` |
-# | summarise | `az.summary(idata, kind="stats")` |
-# | first look | `az.plot_trace_dist(idata, combined=True)` |
-# | joint posterior | `az.plot_pair(idata, marginal=True, marginal_kind="kde")` |
-# | reach the `Dataset` | `idata.posterior.dataset` |
-# | reduce over draws | `post.mean(dim=["chain", "draw"])` |
-# | a posterior for a derived quantity | `post.assign(cv=post["sigma"] / post["mu"])` |
-# | check before fitting | `pm.sample_prior_predictive(...)` |
-# | check after fitting | `pm.sample_posterior_predictive(...)` |
-# | the band for the **mean** | percentiles of $\beta_0 + \beta_1 x$ over draws |
-# | the band for a **new observation** | `pm.sample_posterior_predictive` / bambi `kind="response"` |
-# | intervene | `pm.do(model, {var: value})` |
-# | the same, as a formula | `bmb.Model("y ~ 1 + x", data).fit()` |
-# | predict at new covariates | `bmb_model.predict(idata, data=new_df)` |
-#
-# <details class="sbi-warn" open>
-# <summary>⚠️ <b>Remember the version trap</b></summary>
-#
-# `az.plot_posterior`, `az.plot_ppc`, `az.plot_density`, `az.plot_kde` and
-# `az.waic` no longer exist, and the default interval is an **89% ETI**. Almost
-# everything you find by searching predates that change.
-#
-# </details>
-#
-# **Next:** we stop assuming the sampler works, and start looking at when it
+# **Next:** We stop assuming the sampler works, and start looking at when it
 # does not.

@@ -87,8 +87,6 @@ print("choices", out["choices"].shape, "->", np.unique(out["choices"]))
 #    models, and a *valid-but-wrong* `0`/`1` coding silently mismodels bias.
 # 2. **The response key is `choices`**, and `rts` is 2-D — `(n_samples, 1)`,
 #    not a flat vector.
-# 3. `rts` **includes** non-decision time. `t` is *added* on simulation and
-#    *subtracted* on fitting.
 
 # %% [markdown]
 # ### The shape rule
@@ -162,24 +160,6 @@ fig.tight_layout()
 # Accuracy **saturates**: past roughly $|v| = 3$ every trial goes the same way,
 # and pushing drift higher buys nothing observable. Hold on to that — it is the
 # mechanism behind the identifiability failure in the next session.
-#
-# > **Poll.** Drift `v` is negative on a trial. Which is true?
-# >
-# > - **A.** The trial is faster and more likely to end at `+1`.
-# > - **B.** The trial is slower and more likely to end at `-1`.
-# > - **C.** The trial is equally fast either way; only accuracy changes.
-# > - **D.** The trial drifts toward `-1`, and is *faster* the more negative `v` is.
-#
-# <details>
-# <summary>Answer</summary>
-#
-# **D.** The sign of `v` picks the boundary; the *magnitude* sets how fast
-# evidence accumulates. Strongly negative drift is both fast and reliably `-1`.
-# The slowest trials are the ones with drift near zero — the tall spike in the
-# middle of the left panel. Speed and accuracy are governed by the same
-# quantity here, which is exactly why they trade off.
-#
-# </details>
 
 # %% [markdown]
 # ## 2. How fast is this, and does threading help?
@@ -209,51 +189,6 @@ from cssm import _openmp_status
 
 _openmp_status.print_status()
 
-# %% [markdown]
-# <details class="sbi-warn" open>
-# <summary>⚠️ <b><code>n_threads</code> is a no-op unless the wheel was built with OpenMP</b></summary>
-#
-# If the report above says `OpenMP compiled: No`, then `n_threads` is silently
-# ignored — you will see identical timings for `n_threads=1` and `n_threads=8`,
-# with no error and no warning. The prebuilt macOS wheels are commonly in this
-# state.
-#
-# To get real parallelism you have to install the OpenMP runtime and rebuild
-# **from source** — reinstalling the wheel will not do it, because the wheel is
-# what lacks OpenMP:
-#
-# ```bash
-# brew install libomp gsl      # macOS   (Linux: apt install build-essential libgsl-dev)
-# pip install --force-reinstall --no-binary ssm-simulators ssm-simulators
-# ```
-#
-# </details>
-#
-# ### But first check whether it would help you at all
-#
-# `n_threads` parallelises over **samples, not over trials** — and that
-# distinction decides whether it does anything for your workload. Timings from a
-# source-built copy with OpenMP enabled, on an 18-core machine:
-#
-# | workload | `theta` / `n_samples` | speedup at 16 threads |
-# |---|---|---|
-# | trial-varying, one draw each — **what we just did** | matrix / `1` | **none** (0.98×) |
-# | one parameter set, 1M draws | vector / `1_000_000` | **10.7×** |
-# | 200 parameter sets, 2000 draws each | matrix / `2000` | **10.7×** |
-#
-# The form used above asks for exactly **one sample per parameter set**, so
-# there is nothing to spread across threads — recompiling with OpenMP would buy
-# it nothing. The two forms that *do* benefit are precisely the shape of
-# **training-data generation for a neural likelihood**, where you want many
-# draws per parameter setting.
-#
-# <details class="sbi-key" open>
-# <summary>🔑 <b>The rule</b></summary>
-#
-# Threading helps when `n_samples` is large. If your `n_samples` is 1, the
-# number of threads is irrelevant no matter how your copy was built.
-#
-# </details>
 
 # %% [markdown]
 # ## 3. The model zoo, by introspection
@@ -344,14 +279,14 @@ fig.tight_layout()
 #
 # Two tools, both browser-based:
 #
-# - **[DDM explorer](https://stefanradev93.github.io/sbi4cogsci/tutorials/day2_bayes_toolkit/ddm-explorer.html)**
-#   — a companion page for this session: sliders over drift and boundary
-#   separation, showing what each does to the response-time distributions and
-#   to accuracy.
 # - **[ssms-gui](https://huggingface.co/spaces/franklab/ssms_gui)** — a dashboard
 #   for playing with `ssm-simulators` output directly, across the model zoo
 #   rather than just the DDM. Built for exactly this kind of build-intuition
 #   exploration.
+# - **[DDM explorer](https://stefanradev93.github.io/sbi4cogsci/tutorials/day2_bayes_toolkit/ddm-explorer.html)**
+#   — a companion page for this session: sliders over drift and boundary
+#   separation, showing what each does to the response-time distributions and
+#   to accuracy.
 
 # %% [markdown]
 # ### Exercise 1
@@ -391,92 +326,80 @@ fig.tight_layout()
 #
 # ### Route A — keep the diffusion machinery, change the boundary
 #
-# Register a boundary function and graft it onto the DDM. The function takes
-# time `t` plus its own parameters and returns the **final boundary value**,
-# `a` included — it is not an offset that `a` gets added to. `a` must be listed
-# first in its parameter list.
-
-# **Step 1 — write the function.** Nothing library-specific: it takes time and
-# its own parameters, and returns the boundary at that time.
+# **Step 1 — write the function.** Nothing library-specific: it takes time `t`
+# plus its own parameters, and returns the boundary at that time.
+#
+# The one rule that matters: it returns the **final boundary value**, `a`
+# included. `a` is an argument *to your function*, not a separate multiplier the
+# library applies afterwards — so `a` must be in its signature.
 
 # %%
-from ssms.config import register_boundary
-from ssms.config.model_config_builder import ModelConfigBuilder
+import numpy as np
+from ssms.config import ModelConfigBuilder
 
 
 def exp_collapse(t, a=1.0, rate=0.5):
     """Exponentially collapsing boundary: a * exp(-rate * t)."""
-    import numpy as np          # import locally — the function gets pickled
     return a * np.exp(-rate * np.asarray(t))
 
 
-# It is an ordinary function; you can call and plot it before involving ssms.
+# It is an ordinary function; call and plot it before involving ssms at all.
 print("at t=0:", exp_collapse(0.0, a=1.5, rate=0.6),
       " at t=1:", round(float(exp_collapse(1.0, a=1.5, rate=0.6)), 3))
 
 # %% [markdown]
-# **Step 2 — register it, so the library knows the name.**
+# **Step 2 — describe the model.** One call. A **model config** is the
+# dictionary that fully describes a model — `model_config["ddm"]` from section 3
+# was one. `from_model` copies an existing one and overrides the keys you name,
+# so you inherit everything about the DDM and change only what you mean to.
 #
-# `ssm-simulators` keeps **registries**: lookup tables mapping a name to an
-# implementation plus the parameters it expects. There is one for boundaries,
-# one for drifts, one for whole models. Registering is what lets a *string* like
-# `"exp_collapse"` mean something to code that never imported your function.
-#
-# The parameter list is part of the contract — it tells the simulator which
-# entries of `theta` to route to your function, and **`a` must come first**.
+# Four of the overrides swap in the boundary; three declare the new parameter.
 
 # %%
-register_boundary("exp_collapse", exp_collapse, ["a", "rate"])
+cfg_custom = ModelConfigBuilder.from_model(
+    "ddm",
+    name="ddm_exp_collapse",
+    # --- the boundary ---
+    boundary=exp_collapse,            # the function itself
+    boundary_name="exp_collapse",     # a label, for printing and metadata
+    boundary_params=["a", "rate"],    # which parameters it receives
+    # --- declare `rate` as a parameter of the model ---
+    params=["v", "a", "z", "t", "rate"],
+    n_params=5,
+    param_bounds=[[-3.0, 0.3, 0.1, 0.0, 0.0],
+                  [3.0, 2.5, 0.9, 2.0, 3.0]],
+    default_params=[0.0, 1.0, 0.5, 0.001, 0.5],
+)
 
-from ssms.config import boundary_registry
-print("boundaries now available:")
-print("  ", sorted(boundary_registry.get_boundary_registry().list_boundaries()))
+print("params           :", cfg_custom["params"])
+print("boundary_params  :", cfg_custom["boundary_params"])
+print("param_bounds_dict:", cfg_custom["param_bounds_dict"])
 
 # %% [markdown]
 # <details class="sbi-key" open>
-# <summary>🔑 <b>Registration is per-process</b></summary>
+# <summary>🔑 <b>Why <code>a</code> is in both lists — it is applied once</b></summary>
 #
-# `register_boundary` writes into an **in-memory** registry. Restart the kernel
-# and your model is gone — re-run the cell. In a script or package, register at
-# import time so it always happens before anything looks the name up.
+# The two lists answer different questions, which is why `a` appears in both:
+#
+# - **`params`** — the parameters *you pass in* `theta`. This is the model's
+#   public interface: priors, bounds, and the sampling ranges used to train a
+#   neural likelihood all read this.
+# - **`boundary_params`** — a **routing declaration**. Which of those parameters
+#   get forwarded to your boundary function.
+#
+# So `a` is listed twice but **used once**: it is a model parameter, and the
+# boundary function is what consumes it. The compiled simulator does not
+# multiply by `a` again — your function's return value *is* the boundary. Every
+# built-in agrees: `constant` takes `["a"]`, `angle` takes `["a", "theta"]`,
+# `weibull_cdf` takes `["a", "alpha", "beta"]`.
+#
+# You can check this rather than take it on faith — the simulator hands back the
+# boundary it actually used, and we do exactly that two cells below.
 #
 # </details>
-#
-# **Step 3 — build a model config that uses it.**
-#
-# A **model config** is the dictionary that fully describes a model: its
-# parameter names, their bounds, how many choices, which boundary and drift
-# functions, and which compiled simulator to call. `model_config["ddm"]` from
-# section 3 was one of these.
-#
-# `ModelConfigBuilder` derives new configs from existing ones, so you inherit
-# everything about the DDM and swap out only the boundary.
-
-# %%
-cfg_custom = ModelConfigBuilder.from_model("ddm")
-cfg_custom = ModelConfigBuilder.add_boundary(cfg_custom, "exp_collapse", ["a", "rate"])
-
-print("boundary_name  :", cfg_custom["boundary_name"])
-print("boundary_params:", cfg_custom["boundary_params"])
-print("params         :", cfg_custom["params"])
 
 # %% [markdown]
-# <details class="sbi-warn" open>
-# <summary>⚠️ <b><code>add_boundary</code> does not declare your new parameter</b></summary>
-#
-# Look at `params` above: still `['v', 'a', 'z', 't']`. `rate` lives in
-# `boundary_params` and `simulate()` accepts it — but it is **absent** from
-# `params`, `param_bounds` and `n_params`, and `validate_config` reports the
-# config as valid anyway.
-#
-# Simulation works, so this is easy to miss. Anything that reads the *parameter
-# box* — priors, bounds, the sampling ranges used to train a neural likelihood —
-# will not see `rate` until you add it yourself. Reported upstream as
-# [ssm-simulators #308](https://github.com/lnccbrown/ssm-simulators/issues/308).
-#
-# </details>
-#
-# **Step 4 — simulate from it.** From here it is an ordinary model.
+# **Step 3 — simulate from it.** From here it is an ordinary model.
 
 # %%
 my_sim = Simulator(model=cfg_custom)
@@ -502,6 +425,71 @@ fig.tight_layout()
 # accuracy advantage shrinks too. Both effects are visible at once in the
 # mirrored plot: the fast-collapse curve is pulled toward zero on *both* sides,
 # and its two sides are more nearly equal in area.
+
+# %% [markdown]
+# ### Check the boundary rather than trusting it
+#
+# `metadata["boundary"]` is the boundary the simulator actually evaluated, on
+# its internal time grid. Two things are worth reading off it, and the first
+# settles the "is `a` applied twice?" question directly.
+
+# %%
+b = o_slow["metadata"]["boundary"]
+print(f"b(0)  = {b[0]:.4f}      <- equals a = 1.5 exactly, not 1.5^2 = 2.25")
+print(f"b(t)  = {np.round(b[:4], 4)} ...")
+
+# And it is the function we wrote, evaluated on that grid.
+grid = np.arange(len(b)) * o_slow["metadata"]["delta_t"]
+print("matches exp_collapse on the same grid:",
+      np.allclose(b, exp_collapse(grid, a=1.5, rate=0.15), atol=1e-6))
+
+# %% [markdown]
+# Note the bound is **symmetric**: the diffusion runs between $+b(t)$ and
+# $-b(t)$, so `a` is the distance from zero to one bound, and total separation
+# is $2a$. Worth stating out loud, because "boundary separation" is often used
+# for the full gap.
+#
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>Two ways a custom boundary goes wrong in silence</b></summary>
+#
+# **Leave the new parameter out of `theta`** and it does not error — the
+# simulator falls back to the Python default in your function signature, with no
+# warning. `{"v":…, "a":…, "z":…, "t":…}` with no `rate` quietly simulates
+# `rate=0.5` because that is what `def exp_collapse(t, a=1.0, rate=0.5)` says.
+# Misspell it in `boundary_params` and you get the same silence.
+#
+# **Leave it out of `params`** — i.e. skip the three declaration overrides above
+# — and dict-form `theta` still works perfectly, which is what makes this easy
+# to miss. It breaks only when you pass `theta` as an **array**:
+# `ValueError: model_param_list and theta array do not imply the same number of
+# parameters`. `validate_config` does **not** catch it either way. Anything that
+# reads the parameter box — priors, bounds, the ranges used to train a neural
+# likelihood — will not see `rate` until you declare it.
+# ([ssm-simulators #308](https://github.com/lnccbrown/ssm-simulators/issues/308))
+#
+# </details>
+
+# %% [markdown]
+# <details class="sbi-note">
+# <summary>📝 <b>The other route: registering a name</b></summary>
+#
+# `register_boundary("exp_collapse", exp_collapse, ["a", "rate"])` adds your
+# function to a global registry, after which `from_model(..., boundary_name=…)`
+# or `ModelConfigBuilder.add_boundary(cfg, "exp_collapse")` can find it by
+# string. Useful when a boundary is shared across several configs.
+#
+# We skipped it because it is a second concept that buys nothing here, and it
+# has a trap: **`add_boundary(cfg, "name", ["a", "rate"])` silently ignores that
+# third argument** when the boundary is a string — the parameter list comes from
+# the registry entry, so a list that disagrees with it is quietly discarded. The
+# third argument is only read when you pass a *callable*.
+#
+# The registry is also in-memory and per-process: restart the kernel and the
+# name is gone. Passing the function object, as we did above, sidesteps all of
+# this — and it survives multiprocessing just as well, because either way the
+# function object ends up stored in the config that gets shipped to the worker.
+#
+# </details>
 
 # %% [markdown]
 # ### Route B — write the whole simulator
@@ -552,9 +540,9 @@ print(f"area on the +1 side = {upper:.3f}  (the closed form again)")
 
 # %% [markdown]
 # The analytic check matters: for two racing exponentials,
-# $P(\text{choice}=+1) = v_1/(v_0+v_1)$. We recovered it. **Always find one
-# quantity your simulator must reproduce in closed form** — it is the cheapest
-# bug detector you will ever write.
+# $P(\text{choice}=+1) = v_1/(v_0+v_1)$. We recovered it. **If you find any close
+# close-form quantity that your simulator should reproduce, check it!** — it is the cheapest
+# bug detector.
 
 # %% [markdown]
 # ### Exercise 2
@@ -652,7 +640,8 @@ print(f"\nwrote {outdir / 'ddm_two_designs.csv'}")
 # next session.
 #
 # </details>
-#
+# 
+# **NOTE:**
 # `data/` is gitignored: it is regenerated by running this notebook, never
 # committed.
 
@@ -684,24 +673,6 @@ print(f"\nwrote {outdir / 'ddm_two_designs.csv'}")
 # eye-tracking or learning, start there rather than bolting it on later.
 
 # %% [markdown]
-# ## What to take away
-#
-# <details class="sbi-tip">
-# <summary>💡 <b>The five things that matter</b></summary>
-#
-#
-# 1. **The simulator is the model.** If you cannot generate from it, you do not
-#    understand it yet.
-# 2. **Interrogate, do not memorise.** `model_config[name]["params"]` and
-#    `["param_bounds"]` tell you what any model in the zoo wants.
-# 3. **Shapes:** `theta` vector + `n_samples=n` gives `(n, 1)`; `theta` matrix +
-#    `n_samples=1` gives `(n_trials, 1)`; matrix + `n>1` gives
-#    `(n, n_trials, 1)`. Choices are `[-1, +1]`.
-# 4. **You can build your own model in ~15 lines** — a new boundary, or a whole
-#    new simulator. Registration is per-process.
-# 5. **Always find one closed-form quantity your simulator must reproduce.**
-#
-# </details>
 #
 # ### Quick reference
 #
@@ -711,8 +682,8 @@ print(f"\nwrote {outdir / 'ddm_two_designs.csv'}")
 # | simulate | `sim.simulate(theta=[...], n_samples=n)` |
 # | list models | `model_config.keys()` |
 # | inspect one | `model_config["angle"]` |
-# | check parallel support | `from cssm import _openmp_status; _openmp_status.print_status()` |
-# | add a boundary | `register_boundary(name, fn, ["a", ...])` |
+# | custom boundary | `from_model("ddm", boundary=fn, boundary_params=["a", ...], params=[...])` |
+# | check it took | `out["metadata"]["boundary"]` |
 # | bring your own simulator | `Simulator(simulator_function=fn, params=[...], nchoices=2)` |
 #
 # **Next:** we take the two datasets we just wrote and find out what happens

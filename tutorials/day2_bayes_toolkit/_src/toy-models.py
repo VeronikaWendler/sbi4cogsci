@@ -24,14 +24,7 @@
 # We will not explain *how* the DDM likelihood works — that is tomorrow. Today
 # it is simply a distribution you can use, exactly like `pm.Normal`.
 #
-# The shape of the session is a miniature of the scientific workflow you will
-# see in full on Day 3:
-#
-# 1. look at some data,
-# 2. fit the obvious model,
-# 3. notice it does not describe everything,
-# 4. propose better ones and **compare them**,
-# 5. find out what actually generated the data.
+# The shape of this session is a *miniature scientific workflow*.
 
 # %%
 import sys, pathlib, warnings
@@ -127,7 +120,7 @@ S.truth_line(ax1, 0.5, label="chance")
 fig.tight_layout()
 
 # %% [markdown]
-# Two patterns, and they are **not the same pattern**:
+# Two patterns:
 #
 # - Accuracy climbs steeply with coherence, and barely moves with emphasis.
 # - Mean RT is dominated by emphasis, and moves comparatively little with
@@ -173,11 +166,11 @@ fig.tight_layout()
 # parameters for all 1500 trials:
 #
 # $$
-# v \\sim \\text{Normal}(0, 3), \\quad a \\sim \\text{HalfNormal}(2), \\quad
-# z \\sim \\text{Beta}(5,5), \\quad t \\sim \\text{HalfNormal}(0.5),
+# v \sim \text{Normal}(0, 3), \quad a \sim \text{HalfNormal}(2), \quad
+# z \sim \text{Beta}(5,5), \quad t \sim \text{HalfNormal}(0.5),
 # $$
 # $$
-# (\\text{rt}_i, \\text{resp}_i) \\sim \\text{DDM}(v,\\ a,\\ z,\\ t).
+# (\text{rt}_i, \text{resp}_i) \sim \text{DDM}(v,\ a,\ z,\ t).
 # $$
 
 # %%
@@ -196,10 +189,12 @@ def fit(model, seed=RANDOM_SEED):
 
 
 with pm.Model(coords=COORDS) as m1_flat:
+    # Priors
     v = pm.Normal("v", 0.0, 3.0)
     a = pm.HalfNormal("a", 2.0)
     z = pm.Beta("z", 5.0, 5.0)
     t = pm.HalfNormal("t", 0.5)
+    # Likelihood
     DDM("obs", v=v, a=a, z=z, t=t, observed=observed)
 
 idata_flat = fit(m1_flat)
@@ -288,10 +283,12 @@ compare_plot(pred_flat, "Model 1: one drift, one boundary")
 # %%
 # Model 2: drift varies by coherence; one boundary for everyone.
 with pm.Model(coords=COORDS) as m2_drift:
+    # Priors
     v = pm.Normal("v", 0.0, 3.0, dims="coherence")
     a = pm.HalfNormal("a", 2.0)
     z = pm.Beta("z", 5.0, 5.0)
     t = pm.HalfNormal("t", 0.5)
+    # Likelihood
     DDM("obs", v=v[coh_idx], a=a, z=z, t=t, observed=observed)
 
 idata_drift = fit(m2_drift)
@@ -301,10 +298,12 @@ compare_plot(pred_drift, "Model 2: drift by coherence")
 # %%
 # Model 3: drift varies by coherence AND boundary varies by emphasis.
 with pm.Model(coords=COORDS) as m3_both:
+    # Priors
     v = pm.Normal("v", 0.0, 3.0, dims="coherence")
     a = pm.HalfNormal("a", 2.0, dims="emphasis")
     z = pm.Beta("z", 5.0, 5.0)
     t = pm.HalfNormal("t", 0.5)
+    # Likelihood
     DDM("obs", v=v[coh_idx], a=a[emp_idx], z=z, t=t, observed=observed)
 
 idata_both = fit(m3_both)
