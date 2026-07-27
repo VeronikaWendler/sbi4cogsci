@@ -60,8 +60,10 @@ print("ssm-simulators", ssms.__version__ if hasattr(ssms, "__version__") else "0
 # %% [markdown]
 # ## 1. One call, and the shape rules
 #
-# The drift-diffusion model has four parameters: drift `v`, boundary separation
-# `a`, relative start point `z`, and non-decision time `t`.
+# The drift-diffusion model has four parameters: drift `v`, boundary height `a`,
+# relative start point `z`, and non-decision time `t`. Here the process runs
+# between $+a$ and $-a$, so `a` is the distance from zero to *one* bound — you
+# will also see "boundary separation" used for the full gap, which is $2a$.
 #
 # The main entry point is the **`Simulator` class**. You build one for a model,
 # then call `.simulate()` as often as you like — the model configuration is
@@ -444,10 +446,46 @@ print("matches exp_collapse on the same grid:",
       np.allclose(b, exp_collapse(grid, a=1.5, rate=0.15), atol=1e-6))
 
 # %% [markdown]
-# Note the bound is **symmetric**: the diffusion runs between $+b(t)$ and
-# $-b(t)$, so `a` is the distance from zero to one bound, and total separation
-# is $2a$. Worth stating out loud, because "boundary separation" is often used
-# for the full gap.
+# That check is worth running whenever you attach a boundary, and not only to
+# settle an argument about `a` — because on some base models it would come back
+# telling you the boundary never took effect at all.
+
+# %%
+# Does this base model's engine actually honour a custom boundary? Sweep the
+# collapse rate: if mean RT does not move, your function is being ignored.
+for base in ["ddm", "angle", "ddm_legacy", "lba_angle_3"]:
+    cfg = ModelConfigBuilder.from_model(base, boundary=exp_collapse,
+                                        boundary_name="exp_collapse",
+                                        boundary_params=["a", "rate"])
+    theta = dict(zip(cfg["params"], cfg["default_params"]))
+    theta["a"] = 1.5
+    rts = []
+    for rate in (0.01, 5.0):
+        out = Simulator(cfg).simulate({**theta, "rate": rate}, n_samples=1500,
+                                      random_state=RANDOM_SEED)
+        rts.append(float(out["rts"][out["rts"] > 0].mean()))
+    moved = abs(rts[0] - rts[1]) > 0.05
+    print(f"  {base:14s} mean RT  {rts[0]:6.3f} -> {rts[1]:6.3f}   "
+          f"{'boundary honoured' if moved else 'BOUNDARY IGNORED'}")
+
+# %% [markdown]
+# <details class="sbi-warn" open>
+# <summary>⚠️ <b>Not every engine honours a custom boundary</b></summary>
+#
+# `ddm`, `angle`, `weibull` and the rest of the `ddm_flexbound` family evaluate
+# your function on a time grid and walk against it. **`ddm_legacy`, `addm` and
+# the LBA models do not** — their compiled simulators compute the bound
+# internally and never call `boundary_fun`. You get no error and no warning,
+# just the base model's own behaviour.
+#
+# `lba_angle_3` is the sharpest case: it declares `boundary_name="constant"`,
+# the config machinery dutifully routes `a` into `boundary_params`, and the
+# engine then drops it. The config advertises support the engine does not have.
+#
+# So build custom boundaries on a flexbound-family base model, and run the sweep
+# above when you are unsure. Reported upstream — see the folder README.
+#
+# </details>
 #
 # <details class="sbi-warn" open>
 # <summary>⚠️ <b>Two ways a custom boundary goes wrong in silence</b></summary>

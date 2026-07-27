@@ -471,25 +471,6 @@ print(f"  t          {post['t'].values.mean():5.2f} +/- {post['t'].values.std():
 # </details>
 
 # %% [markdown]
-# ## What to take away
-#
-# <details class="sbi-tip">
-# <summary>💡 <b>The four things that matter</b></summary>
-#
-#
-# 1. **A cognitive-model likelihood is just a distribution.**
-#    `from hssm.likelihoods import DDM`, then use it like `pm.Normal` — with
-#    `[rt, response]` as observed data and responses coded `-1`/`+1`.
-# 2. **Design features act on parameters.** Stimulus quality → drift rate;
-#    speed/accuracy instruction → boundary separation. In raw PyMC that is
-#    `dims=` plus an index: `v[coh_idx]`.
-# 3. **A model that fits nothing still returns tidy numbers.** Converged is not
-#    correct. Ask it to reproduce the data.
-# 4. **Compare models with LOO, and check them against the data.** Comparison
-#    ranks your candidates; predictive checks tell you whether the whole set is
-#    wrong.
-#
-# </details>
 #
 # ### Where this goes
 #
