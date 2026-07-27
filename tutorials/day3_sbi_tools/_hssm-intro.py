@@ -99,11 +99,20 @@ gen_model = hssm.HSSM(
     p_outlier=None, center_predictors=False,
 )
 
+# Every free parameter must be pinned, and each value must match that
+# parameter's SHAPE. Categorical contrasts are vectors even when there is only
+# one of them — `a_C(cond)` has shape (1,), so it takes [0.7], not 0.7.
 TRUE = {
-    "v_Intercept": 0.6, "v_theta": 0.9,
-    "a_Intercept": 1.1, "a_C(cond)": 0.7,     # contrast for "hard" vs the "easy" reference
-    "z": 0.5, "t": 0.30,
+    "v_Intercept": 0.6,      # drift at theta = 0
+    "v_theta": 0.9,          # drift per unit of theta
+    "a_Intercept": 1.1,      # boundary in the "easy" condition
+    "a_C(cond)": [0.7],      # how much wider the boundary is when "hard"
+    "z": 0.5,
+    "t": 0.30,
 }
+print("free parameters and their shapes:")
+for rv, val in gen_model.pymc_model.initial_point().items():
+    print(f"   {rv:24s} {val.shape}")
 
 # `sample_do` pins every free parameter to a chosen value and draws from the
 # resulting model — the do-operator you met yesterday, used generatively.
