@@ -146,8 +146,9 @@ def label_choice_axis(ax, rt_max=4.0, lower="lower boundary (-1)",
     ax.set_xlabel(f"← {lower}     response time (s)     {upper} →")
 
 
-def posterior_diagnostics(idata, var_names, *, title=None,
-                          trace_size=(9.5, None), pair_size=(7.0, 7.0)):
+def posterior_diagnostics(idata, var_names, *, title=None, pair_var_names=None,
+                          pair_coords=None, trace_size=(9.5, None),
+                          pair_size=(7.0, 7.0)):
     """The same two looks at every fit: traces, then the joint.
 
     Both come from ArviZ (`plot_trace_dist` and `plot_pair`) rather than being
@@ -159,9 +160,17 @@ def posterior_diagnostics(idata, var_names, *, title=None,
     DIVERGENT colour. If they cluster anywhere rather than scattering, that
     location is the part of the posterior your sampler could not handle.
 
+    A pair plot grows as the *square* of the number of scalar entries, so a
+    couple of vector-valued parameters is enough to make it both unreadable and
+    illegal (ArviZ refuses past `plot.max_subplots`, default 40). Pass
+    `pair_var_names` / `pair_coords` to show a readable subset in the joint
+    while the traces still cover everything. If the request is still too large
+    the limit is raised rather than allowed to abort a long notebook run.
+
     Returns (trace_figure, pair_figure).
     """
     import arviz as az
+    import numpy as np
     import matplotlib.pyplot as plt
 
     az.plot_trace_dist(idata, var_names=var_names, combined=True)
@@ -172,9 +181,27 @@ def posterior_diagnostics(idata, var_names, *, title=None,
         fig_trace.suptitle(f"{title} — marginals and traces", y=1.02)
     fig_trace.tight_layout()
 
+    pair_names = pair_var_names if pair_var_names is not None else var_names
+
+    # Count the SCALAR entries the pair matrix will need: a variable with dims
+    # contributes one row/column per level, so the subplot count is the square
+    # of the total. Raise ArviZ's ceiling if needed rather than let a long
+    # notebook run die at the last cell.
+    post = idata["posterior"].dataset if hasattr(idata, "children") else idata.posterior
+    n_scalar = 0
+    for name in pair_names:
+        da = post[name]
+        sel = (pair_coords or {})
+        extra = [d for d in da.dims if d not in ("chain", "draw")]
+        n_scalar += int(np.prod([len(sel[d]) if d in sel else da.sizes[d]
+                                 for d in extra])) if extra else 1
+    needed = n_scalar ** 2
+    if needed > az.rcParams["plot.max_subplots"]:
+        az.rcParams["plot.max_subplots"] = needed
+
     # `divergence` is drawn with matplotlib's `scatter`, so the size keyword is
     # `s`, not `markersize` (which raises).
-    az.plot_pair(idata, var_names=var_names, marginal=True,
+    az.plot_pair(idata, var_names=pair_names, coords=pair_coords, marginal=True,
                  visuals={"divergence": {"color": DIVERGENT, "s": 14,
                                          "alpha": 0.9}})
     fig_pair = plt.gcf()
