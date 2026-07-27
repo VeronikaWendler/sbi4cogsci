@@ -51,7 +51,7 @@ $$
 p(\theta_{1:G},\, \phi \mid y) \;\propto\;
 \prod_{g=1}^{G} \left[ \prod_{i=1}^{n_g} p(y_{gi} \mid \theta_g)
 \;\cdot\;
-p(\theta_g \mid \phi) \rigth]
+p(\theta_g \mid \phi) \right]
 \;\cdot\;
 p(\phi)
 $$
@@ -170,13 +170,10 @@ not — a **big gap**. A rigid model fits both about equally — a **small gap**
 That gap is the price of flexibility, denominated in parameters.
 
 ::: {.callout-note}
-## Two useful facts
+## Note
 For a simple model with flat priors, `p_loo` lands near the actual parameter
 count. Anything that **constrains** parameters — a prior, or a hierarchy —
 pushes it below.
-
-In ArviZ: `az.loo(idata)`. Note the attribute is `.p`, though it *prints* as
-`p_loo`.
 :::
 
 ## Count what the parameters cost, not how many there are
@@ -200,7 +197,7 @@ Under pooling, each $v_g$ is pulled toward $\mu$ — so it is no longer free, an
 it costs a **fraction** of a parameter.
 :::
 
-## The two extra parameters are not two extra freedoms
+## The two extra parameters are not two full extra degrees of freedom
 
 They are two **knobs that remove freedom** from the other twenty.
 
@@ -229,14 +226,18 @@ nearly vanishes: each participant's own data identifies their drift, shrinkage
 has nothing to pull against, and `p_loo` sits close to the nominal count.
 :::
 
-. . .
-
 Also note `elpd_loo` was **a tie** (−3984 vs −3983). Trial-level LOO is
 dominated by the participants who had plenty of data. Fewer effective
 parameters, same trial-level prediction — the benefit showed up in the
 *estimates*, which is what the previous slides measured.
+. . .
 
-## But the sampler now sees this
+## Hierarchical models have benefits
+### Now we look at some of the problems...
+
+. . .
+
+## The geometry changes meaningfully
 
 The population scale $\tau$ and the participant offsets $\theta_g$ are coupled:
 small $\tau$ forces every $\theta_g$ into a narrow band.
@@ -293,7 +294,8 @@ and $\hat{R}$ cannot see it, because every chain fails the same way.
 ::: {.column width="50%"}
 **Centered**
 
-$$\theta_g \sim \text{Normal}(\mu, \tau)$$
+$$\theta_g \sim \text{Normal}(\mu, \tau)$$ \
+
 
 Sample $\theta_g$ directly. Its scale depends on $\tau$ — that coupling *is*
 the funnel.
@@ -421,12 +423,12 @@ You only see it by plotting $\theta_g$ (or $z_g$) against $\log\tau$
 
 **There is a fix** — split the groups by a size threshold and parameterize each
 half its own way. We are not building it today; it needs per-group surgery on
-the model. Come and ask if you have data like this, because you probably do.
+the model.
 
 ## Which is why you want it per parameter
 
 The rule is *per random effect*, and one SSM can hold several that disagree —
-because **different parameters are informed by different amounts of data**,
+because **different parameters are not equally informed by data**,
 even from the very same trials.
 
 ::: {.incremental}
@@ -434,7 +436,7 @@ even from the very same trials.
   to it. Hundreds of trials per participant → **likelihood dominates** →
   centered.
 - **Boundary $a$** is identified mostly through the speed–accuracy
-  relationship, so it needs *variation* rather than volume — far fewer
+  relationship, so it needs *variation* rather than volume — fewer
   effective observations → **prior dominates** → non-centered.
 - **A condition effect** present on only a fraction of trials has effectively
   that fraction of the data → **non-centered**.
