@@ -866,20 +866,13 @@ for k in PARAMS:
 # not collect the information**.
 #
 # Notice that `t` is barely affected while `a` blows up. The damage is not
-# spread evenly: it lands on whichever parameters enter only through a
-# combination the data cannot break apart.
+# spread evenly.
 #
 # Whether the point estimates also come out *biased* varies from dataset to
 # dataset, which is itself worth noticing: on a ridge, where the posterior mean
 # lands depends on where the prior and the little remaining information happen
 # to pull it. Sometimes you get lucky. You cannot tell from one fit which case
 # you are in — that is the problem.
-#
-# Lüken, Heathcote, Haaf & Matzke (2025, *Psychonomic Bulletin & Review*
-# 32(3):1411–1424) study this systematically and recommend designing for error
-# rates between **15% and 35%**. Below that, parameters stop being separately
-# identifiable — and collecting more trials does not rescue a design with no
-# errors in it.
 #
 # </details>
 #
@@ -908,44 +901,6 @@ for k in PARAMS:
 # </details>
 
 # %% [markdown]
-# ## What to take away
-#
-# <details class="sbi-tip" open>
-# <summary>💡 <b>The six things that matter</b></summary>
-#
-#
-# 1. **MCMC turns integrals into averages.** You cannot integrate $\pi$, so you
-#    sample from it and average.
-# 2. **The normalizing constant cancels.** Every accept/reject decision is a
-#    *ratio*, so the evidence $p(y)$ never has to be computed to sample a
-#    posterior.
-# 3. **Acceptance rate is not quality.** A tiny step size accepts nearly
-#    everything and explores nearly nothing. Judge by ESS — and remember that a
-#    marginal `sd` landing on the right answer proves nothing.
-# 4. **Correlation is what breaks random-walk samplers.** On a long thin ridge
-#    there is no good step size: small steps crawl, large steps get rejected,
-#    and the two directions want different settings. Gibbs fails on the same
-#    ridge without having a step size at all — which is how you know the
-#    algorithm was never the problem.
-# 5. **Slow is survivable; wrong is not.** A chain that never traverses a
-#    direction reports that direction as certain. NUTS converts bad geometry
-#    into a bigger compute bill instead of a confident wrong answer.
-# 6. **Some posteriors are hard because of the data, not the sampler.** A
-#    near-degenerate ridge is the experiment's fault, and no sampler fixes it.
-#
-# </details>
-#
-# ### Quick reference
-#
-# | want to | do |
-# |---|---|
-# | see the trade-off structure | correlation matrix of posterior draws |
-# | see a specific trade-off | scatter the two parameters, mark the truth |
-# | find what IS identified | look for a combination with a small relative width |
-# | judge a sampler | `az.ess` and $\hat{R}$, never the acceptance rate |
-# | run Metropolis in PyMC | `pm.sample(..., step=pm.Metropolis())`, built inside the model |
-# | design a study you can fit | aim for **15-35% errors** |
-#
 # **Next, tomorrow at 11:00:** today's difficulties came from correlation that
 # is roughly the same everywhere in parameter space. Hierarchical models bring a
 # nastier relative — curvature that *changes as you move* — where the failure

@@ -49,16 +49,16 @@ $p(\theta)$**:
 
 $$
 p(\theta_{1:G},\, \phi \mid y) \;\propto\;
-\prod_{g=1}^{G} \prod_{i=1}^{n_g} p(y_{gi} \mid \theta_g)
+\prod_{g=1}^{G} \left[ \prod_{i=1}^{n_g} p(y_{gi} \mid \theta_g)
 \;\cdot\;
-\prod_{g=1}^{G} p(\theta_g \mid \phi)
+p(\theta_g \mid \phi) \rigth]
 \;\cdot\;
 p(\phi)
 $$
 
 | term | what it is |
 |---|---|
-| $\prod_g \prod_i p(y_{gi} \mid \theta_g)$ | **likelihood** — trial $i$ of participant $g$ |
+| $\prod_i p(y_{gi} \mid \theta_g)$ | **likelihood** — trial $i$ of participant $g$ |
 | $\prod_g p(\theta_g \mid \phi)$ | **population** — where participants come from |
 | $p(\phi)$ | **hyperprior** |
 

@@ -52,7 +52,7 @@ print("pymc", pm.__version__, "| arviz", az.__version__)
 # ordering is misleading unless we first establish what they buy you, so start
 # there.
 #
-# The setting is the one real cognitive data is always in: **unbalanced**. Some
+# Motivating setting: **unbalanced** data across participants. Some
 # participants completed hundreds of trials, some barely turned up.
 
 # %%
@@ -111,9 +111,12 @@ F.fig_pooling_error(pool)
 # > dense ones not at all. Why not at all?
 # >
 # > **A.** The sampler converged better for them.
+# >
 # > **B.** Their likelihood already dominates the prior, so shrinkage has
 # >   almost nothing to pull against.
+# >
 # > **C.** The population distribution does not apply to them.
+# >
 # > **D.** They were closer to the population mean to begin with.
 #
 # <details>
@@ -158,7 +161,7 @@ for key, label in [("no_pooling", "no pooling"), ("partial_pooling", "partial po
 # <summary>⚠️ <b>Two honest caveats before you quote this number</b></summary>
 #
 # **The gap depends on how sparse your groups are.** Ours has participants with
-# five trials, and those shrink hard. Re-run with 600 trials for everyone and
+# five trials, and those shrink a lot. Re-run with 600 trials for everyone and
 # the gap nearly closes: each participant's own data identifies their drift,
 # shrinkage has nothing to pull against, and `p_loo` approaches the nominal
 # count. The effective-parameter story is a statement about *your data*, not
@@ -546,10 +549,14 @@ for n in participant_nodes:
 # <summary>⚠️ <b>Two ways this bites</b></summary>
 #
 # **Non-centering only works for `Normal` priors whose `sigma` is itself a
-# random variable.** Anything else raises `NotImplementedError` when the model
+# random variable.:** 
+# 
+# Anything else raises `NotImplementedError` when the model
 # is built — loud, at least.
 #
-# **The quiet one:** a `Normal` group prior with a nested `mu` hyperprior under
+# **Check for disconnected nodes:** 
+# 
+# A `Normal` group prior with a nested `mu` hyperprior under
 # non-centering leaves `mu` as a **disconnected free variable** — sampled, but
 # influencing nothing. HSSM 0.4.0 ships detectors for this
 # (`check_user_priors_against_parameterization`, `find_disconnected_free_rvs`).
@@ -674,49 +681,6 @@ F.fig_shrinkage(reg["slope"], ylabel=r"estimated slope $\beta_1$",
 # evidence that `a` wants a non-centered parameterization while `v` does not.
 #
 # </details>
-
-# %% [markdown]
-# ## 7. Where this goes next
-#
-# Centered and non-centered are the two endpoints of a continuum. **VIP**
-# (variationally inferred parametrization; Gorinova, Moore & Hoffman, ICML 2020)
-# learns a per-variable $\lambda \in [0,1]$:
-#
-# $$\tilde{\theta} \sim \text{Normal}\!\left(\lambda\mu,\ \sigma^{\lambda}\right),
-#   \qquad
-#   \theta = \mu + \sigma^{1-\lambda}\left(\tilde{\theta} - \lambda\mu\right)$$
-#
-# Check the endpoints, because the convention is easy to get backwards:
-# $\lambda = 1$ gives $\theta = \tilde{\theta} \sim \text{Normal}(\mu, \sigma)$,
-# which is **centered**; $\lambda = 0$ gives $\theta = \mu + \sigma\tilde{\theta}$
-# with $\tilde{\theta} \sim \text{Normal}(0,1)$, which is **non-centered**.
-#
-# The optimiser picks the point in between for **each** variable, and the paper
-# reports a "modest but real" gain at intermediate $\lambda$ when the data is
-# neither weak nor strong. It is available in PyMC as
-# `pymc_extras.model.transforms.autoreparam.vip_reparametrize`.
-#
-# <details class="sbi-note">
-# <summary>📝 <b>The experts disagree about how much this buys you</b></summary>
-#
-# Betancourt's position is that "for any given likelihood function a
-# partially-centered parameterization may perform better … but in practice the
-# differences are usually negligible." Gorinova et al. measure a real if modest
-# improvement. Both can be true: **which groups** you center matters far more
-# than how precisely you center each one — which is the next section.
-#
-# </details>
-#
-# ## What to take away
-#
-# - A hierarchical posterior has **position-dependent curvature**. That is a
-#   different problem from correlation, and it needs a different fix.
-# - Divergences mean **bias**, not slowness. $\hat{R}$ and ESS cannot see it.
-# - Raising `target_accept` removes the warning, not the cause.
-# - **Non-centered is not universally better.** Data-poor groups want
-#   non-centered; data-rich groups want centered.
-# - In HSSM, choose per parameter with `noncentered={"v": False, "a": True}`,
-#   and verify it from the `_offset` nodes in the graph.
 
 # %% [markdown]
 # ### References

@@ -32,17 +32,10 @@
 # | | bambi | HSSM |
 # |---|---|---|
 # | likelihood | GLM families | **DDM, LBA, race, collapsing-bound, …** |
-# | what a formula acts on | the mean (and other family params) | **any SSM parameter** — drift, boundary, bias, non-decision time |
+# | what a formula acts on | parameters of the family | **translates to any SSM parameter** — drift, boundary, bias, non-decision time |
 # | where the likelihood comes from | closed form | closed form, a **neural approximation**, or your own function |
-# | built in | — | lapse process, SSM-specific fit checks |
+# | extras features | — | native lapse processes, proprietary plots, "surrogate -> PyMC RV" constructors |
 #
-# <details class="sbi-note">
-# <summary>📝 <b>Sections marked <i>optional</i> are reference material</b></summary>
-#
-# The live path is sections 1-5. Sections 6-8 exist so you have working code to
-# come back to.
-#
-# </details>
 
 # %%
 import sys, pathlib, warnings
@@ -76,12 +69,21 @@ print("hssm", hssm.__version__, "|", len(hssm.list_models()), "built-in models")
 # The generative model is
 #
 # $$
-# v_i = \beta^v_0 + \beta^v_1\, \text{theta}_i, \qquad
-# a_i = \beta^a_0 + \beta^a_1\, \mathbb{1}[\text{cond}_i = \text{"hard"}],
+# v_i = \beta^v_0 + \beta^v_1\, \mathbb{1}[\text{cond}_i = \text{"hard"}],
+# \qquad
+# a_i = \beta^a_0 + \beta^a_1\, \text{theta}_i,
 # $$
 #
-# with $z$ and $t$ fixed. Drift depends on a continuous covariate; boundary
-# depends on a condition.
+# with $z$ and $t$ fixed. **Difficulty acts on the drift** — a harder stimulus
+# supplies weaker evidence — and **theta acts on the boundary**.
+#
+# That assignment is a modelling claim, not a convenience, and it is worth two
+# sentences. It matches the finding the `cavanagh_theta` dataset is famous for:
+# mediofrontal theta tracks the **decision threshold**, not the rate of evidence
+# accumulation. It also makes the two manipulations *visibly different*: drift
+# moves accuracy and RT together, boundary trades them off. You will see exactly
+# that in the fit checks below, and the exercise at the end asks what happens
+# when you assign them the other way round.
 
 # %%
 N_TRIALS = 1200
@@ -97,19 +99,23 @@ scaffold["cond"] = cond
 # lapses; center_predictors=False so an Intercept means "the value at 0".
 gen_model = hssm.HSSM(
     data=scaffold, model="ddm",
-    include=[{"name": "v", "formula": "v ~ 1 + theta"},
-             {"name": "a", "formula": "a ~ 1 + C(cond)"}],
+    include=[{"name": "v", "formula": "v ~ 1 + C(cond)"},
+             {"name": "a", "formula": "a ~ 1 + theta"}],
     p_outlier=None, center_predictors=False,
 )
 
 # Every free parameter must be pinned, and each value must match that
 # parameter's SHAPE. Categorical contrasts are vectors even when there is only
-# one of them — `a_C(cond)` has shape (1,), so it takes [0.7], not 0.7.
+# one of them — `v_C(cond)` has shape (1,), so it takes [-0.4], not -0.4.
+#
+# The two drift values are chosen to land both conditions in the 15-35% error
+# band that yesterday afternoon identified as the well-conditioned regime:
+# easy ends up near 14% errors, hard near 36%.
 TRUE = {
-    "v_Intercept": 0.6,      # drift at theta = 0
-    "v_theta": 0.9,          # drift per unit of theta
-    "a_Intercept": 1.1,      # boundary in the "easy" condition
-    "a_C(cond)": [0.7],      # how much wider the boundary is when "hard"
+    "v_Intercept": 0.6,      # drift in the "easy" condition
+    "v_C(cond)": [-0.4],     # how much WEAKER the evidence is when "hard"
+    "a_Intercept": 1.5,      # boundary at theta = 0
+    "a_theta": 0.3,          # boundary per unit of theta
     "z": 0.5,
     "t": 0.30,
 }
@@ -291,15 +297,15 @@ plt.tight_layout()
 # ## 5. The model the data deserves
 #
 # The flat model has one drift and one boundary for every trial, but we built
-# this dataset so that drift tracks `theta` and boundary depends on `cond`.
+# this dataset so that drift depends on `cond` and boundary tracks `theta`.
 # In HSSM that is a formula per parameter — the bambi idea, applied to the
 # inside of a cognitive model.
 
 # %%
 model_reg = hssm.HSSM(
     data=data, model="ddm",
-    include=[{"name": "v", "formula": "v ~ 1 + theta"},
-             {"name": "a", "formula": "a ~ 1 + C(cond)"}],
+    include=[{"name": "v", "formula": "v ~ 1 + C(cond)"},
+             {"name": "a", "formula": "a ~ 1 + theta"}],
     p_outlier=0.05,
 )
 model_reg.graph()
@@ -308,8 +314,8 @@ model_reg.graph()
 model_reg.sample(draws=500, tune=500, chains=2, cores=1,
                  random_seed=RANDOM_SEED, progressbar=False)
 print(az.summary(model_reg.traces,
-                 var_names=["v_Intercept", "v_theta", "a_Intercept",
-                            "a_C(cond)", "z", "t"],
+                 var_names=["v_Intercept", "v_C(cond)", "a_Intercept",
+                            "a_theta", "z", "t"],
                  kind="stats").to_string())
 print("\nTRUE:", {k: v for k, v in TRUE.items()})
 
@@ -318,19 +324,38 @@ model_reg.sample_posterior_predictive(kind="response", draws=100)
 model_reg.plot_quantile_probability(cond="cond", predictive_style="ellipse",
                                     ellipse_confidence=0.95)
 plt.gcf().set_size_inches(7.5, 4.5)
-plt.gcf().suptitle("Regression model — drift ~ theta, boundary ~ condition", y=1.02)
+plt.gcf().suptitle("Regression model — drift ~ condition, boundary ~ theta", y=1.02)
 plt.tight_layout()
 
 # %% [markdown]
-# Compare the two quantile probability plots. The flat model puts every
-# condition at the same place; the regression model separates them and the
-# ellipses sit on the observed points. And the recovered coefficients match the
-# values we generated with.
+# ### How to read a quantile probability plot
+#
+# This is the standard fit check for sequential-sampling models, and it is worth
+# learning to read properly because it shows accuracy and RT *at the same time*.
+#
+# - **Horizontal axis** — the proportion of responses in that group. Each
+#   condition contributes **two** points: its errors on the left, its correct
+#   responses on the right, mirrored about 0.5.
+# - **Vertical axis** — RT quantiles. The three lines are the 25th, 50th and
+#   75th percentiles, so the vertical spread *is* the shape of the RT
+#   distribution.
+# - **Ellipses** — the posterior predictive. The model fits where they cover the
+#   observed points.
+#
+# So the four x-positions read outward from the centre as: hard errors, hard
+# correct, easy errors, easy correct. **Because difficulty acts on the drift,
+# the conditions land at genuinely different proportions** — easy near 0.14 and
+# 0.86, hard near 0.36 and 0.64 — which is what gives the plot its
+# characteristic inverted-U and makes the fit checkable at all.
+#
+# Compare it with the flat model's plot above: that one collapses both
+# conditions onto a single pair of positions, because a single drift cannot
+# produce two accuracies.
 #
 # <details class="sbi-tip">
 # <summary>💡 <b>This is the whole argument for HSSM</b></summary>
 #
-# `include=[{"name": "v", "formula": "v ~ 1 + theta"}]` replaced the
+# `include=[{"name": "v", "formula": "v ~ 1 + C(cond)"}]` replaced the
 # `v[coh_idx]` indexing you wrote by hand yesterday — and it extends to random
 # effects, multiple parameters, and link functions without you writing any of
 # it.
@@ -340,8 +365,10 @@ plt.tight_layout()
 # %% [markdown]
 # ### Exercise
 #
-# Fit a model where the mapping is **swapped**: boundary depends on `theta` and
-# drift on `cond`. Compare its quantile probability plot to the one above.
+# Fit a model where the mapping is **swapped**: drift depends on `theta` and
+# boundary on `cond`. It has exactly the same number of parameters. Compare its
+# quantile probability plot to the one above, and predict first — which of the
+# two axes of the plot will it get wrong?
 #
 # <details>
 # <summary>What to notice</summary>
@@ -349,19 +376,29 @@ plt.tight_layout()
 # ```python
 # swapped = hssm.HSSM(
 #     data=data, model="ddm",
-#     include=[{"name": "v", "formula": "v ~ 1 + C(cond)"},
-#              {"name": "a", "formula": "a ~ 1 + theta"}])
+#     include=[{"name": "v", "formula": "v ~ 1 + theta"},
+#              {"name": "a", "formula": "a ~ 1 + C(cond)"}])
 # swapped.sample(draws=500, tune=500, chains=2, cores=1, progressbar=False)
 # swapped.sample_posterior_predictive(kind="response", draws=100)
 # swapped.plot_quantile_probability(cond="cond", predictive_style="ellipse")
 # ```
 #
-# It has the same number of parameters and still fits far better than the flat
-# model, because `cond` and `theta` are correlated with the data in ways that
-# partly substitute for each other. But the ellipses miss systematically, and
-# the recovered coefficients do not correspond to anything that generated the
-# data. Same lesson as yesterday afternoon: **the right number of parameters is
-# not the same as the right model.**
+# The **horizontal** axis is the one that collapses. Boundary height barely
+# moves accuracy when the start point is unbiased — raising `a` makes both
+# responses slower and leaves their *ratio* almost untouched — so a model that
+# puts the condition effect on `a` predicts the two conditions at nearly the
+# same proportion. Its predicted ellipses stack up in two vertical columns while
+# the observed points sit at four clearly separated positions.
+#
+# It still fits far better than the flat model, and it has the right number of
+# parameters. That is the trap: **the right number of parameters is not the same
+# as the right model**, and a summary table of coefficients will not tell you —
+# the fit check will.
+#
+# This is also a design lesson, not only a modelling one. If your manipulation
+# only ever moves the boundary, a quantile probability plot has almost no
+# horizontal spread to check against, and you have thrown away the axis that
+# makes the model falsifiable.
 #
 # </details>
 
@@ -374,8 +411,8 @@ plt.tight_layout()
 # %%
 model_hier = hssm.HSSM(
     data=data, model="ddm",
-    include=[{"name": "v", "formula": "v ~ 1 + theta + (1|participant_id)"},
-             {"name": "a", "formula": "a ~ 1 + C(cond)"}],
+    include=[{"name": "v", "formula": "v ~ 1 + C(cond) + (1|participant_id)"},
+             {"name": "a", "formula": "a ~ 1 + theta"}],
     noncentered=True,          # see Day 3, 11:00 for why this matters
     p_outlier=0.05,
     prior_settings="safe",
@@ -386,8 +423,8 @@ model_hier.graph()
 model_hier.sample(draws=500, tune=500, chains=2, cores=1,
                   random_seed=RANDOM_SEED, progressbar=False)
 print(az.summary(model_hier.traces,
-                 var_names=["v_Intercept", "v_theta", "v_1|participant_id_sigma",
-                            "a_Intercept", "a_C(cond)"],
+                 var_names=["v_Intercept", "v_C(cond)", "v_1|participant_id_sigma",
+                            "a_Intercept", "a_theta"],
                  kind="stats").to_string())
 
 # %% [markdown]
