@@ -473,17 +473,20 @@ for base in ["ddm", "angle", "ddm_legacy", "lba_angle_3"]:
 # <summary>⚠️ <b>Not every engine honours a custom boundary</b></summary>
 #
 # `ddm`, `angle`, `weibull` and the rest of the `ddm_flexbound` family evaluate
-# your function on a time grid and walk against it. **`ddm_legacy`, `addm` and
-# the LBA models do not** — their compiled simulators compute the bound
-# internally and never call `boundary_fun`. You get no error and no warning,
-# just the base model's own behaviour.
+# your function on a time grid and walk against it. **13 of the 113 built-in
+# models do not** — `ddm_legacy`, `addm`, the whole LBA family, `poisson_race`
+# and `racing_diffusion_3`. Their compiled simulators compute the bound
+# internally and have no `boundary_fun` argument at all, so it lands in
+# `**kwargs` and is discarded. You get no error, and usually no warning.
 #
 # `lba_angle_3` is the sharpest case: it declares `boundary_name="constant"`,
-# the config machinery dutifully routes `a` into `boundary_params`, and the
-# engine then drops it. The config advertises support the engine does not have.
+# the config machinery dutifully routes `a` into the boundary call, and the
+# engine ignores the lot. The config advertises support the engine lacks.
 #
 # So build custom boundaries on a flexbound-family base model, and run the sweep
-# above when you are unsure. Reported upstream — see the folder README.
+# above when you are unsure — it is three lines and it is the only way to tell.
+# Reported upstream as
+# [ssm-simulators #310](https://github.com/lnccbrown/ssm-simulators/issues/310).
 #
 # </details>
 #
@@ -526,6 +529,12 @@ for base in ["ddm", "angle", "ddm_legacy", "lba_angle_3"]:
 # name is gone. Passing the function object, as we did above, sidesteps all of
 # this — and it survives multiprocessing just as well, because either way the
 # function object ends up stored in the config that gets shipped to the worker.
+#
+# One more reason to prefer the callable: `add_boundary` stores the registry's
+# *own* parameter list in your config rather than a copy, so an innocent
+# `cfg["boundary_params"].append(...)` corrupts the registry for the rest of the
+# process — and every later config built from that name inherits the damage.
+# ([ssm-simulators #311](https://github.com/lnccbrown/ssm-simulators/issues/311))
 #
 # </details>
 
