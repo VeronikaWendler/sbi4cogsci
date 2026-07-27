@@ -72,8 +72,47 @@ only 20 samples.
 
 ## Repo-only files
 
-Files beginning with `_` are deliberately kept off the published website:
-`_compare-models.ipynb` is an unfinished draft, and
-`_lasenet_tutorial_solution.ipynb` is an answer key. Quarto skips `_`-prefixed
-paths. Note the repository itself is public, so a `_` prefix hides a file from
-the site but not from GitHub.
+Files and folders beginning with `_` are deliberately kept off the published
+website — Quarto skips `_`-prefixed paths. Note the repository itself is public,
+so a `_` prefix hides a file from the site but not from GitHub.
+
+- `_compare-models.ipynb` — an unfinished draft.
+- `_lasenet_tutorial_solution.ipynb` — an answer key.
+- `_src/` — sources for the two Fengler notebooks, plus the script that bakes
+  the slide figures. See below.
+
+## Editing `hssm-intro` and `hierarchical-mcmc`
+
+**Do not edit those two `.ipynb` files directly — your changes will be
+overwritten.** Each is generated from a percent-format Python source in `_src/`:
+
+```
+_src/hssm-intro.py     <- edit this
+hssm-intro.ipynb       <- generated; committed with outputs because the
+                          Pages CI has no Python and never executes anything
+```
+
+Rebuild after editing:
+
+```bash
+cd tutorials && ./build_notebooks.sh day3_sbi_tools/_src/hssm-intro.py
+```
+
+The split exists because a `.ipynb` diff is unreviewable — a one-line change to
+a plot arrives as thousands of lines of re-encoded PNG. The `.py` is the
+readable history. The sources live one level down because a same-stem `.py`
+sitting next to a `.ipynb` makes Quarto drop the page silently.
+
+The other notebooks here (`dmc-bayesflow.ipynb`, `lasenet_tutorial.ipynb`) have
+no such source and are edited directly.
+
+`_src/bake_slide_figures.py` regenerates the PNGs that
+`hierarchical-mcmc-slides.qmd` embeds. The deck cannot generate plots at render
+time, so they are committed:
+
+```bash
+cd tutorials && uv run python day3_sbi_tools/_src/bake_slide_figures.py
+```
+
+Every figure comes from `tutorials/sbi4cogsci_figures.py`, the same module the
+notebook imports, so a change updates both.

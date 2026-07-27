@@ -7,7 +7,7 @@ simulations and the slider selects among them.
 
 Run this whenever the grid needs regenerating:
 
-    cd tutorials && uv run python day2_bayes_toolkit/_precompute_ddm_grid.py
+    cd tutorials && uv run python day2_bayes_toolkit/_src/precompute_ddm_grid.py
 
 Writes `day2_bayes_toolkit/ddm_grid.json`.
 """
@@ -55,7 +55,9 @@ def main():
         "a_grid": A_GRID,
         "cells": grid,
     }
-    out = pathlib.Path(__file__).parent / "ddm_grid.json"
+    # This file lives in `<day folder>/_src/`; the JSON belongs beside the
+    # page that fetches it, one level up.
+    out = pathlib.Path(__file__).resolve().parent.parent / "ddm_grid.json"
     out.write_text(json.dumps(payload, separators=(",", ":")))
     kb = out.stat().st_size / 1024
     print(f"{len(grid)} cells ({len(V_GRID)} x {len(A_GRID)}) -> {out.name}  {kb:.0f} KB")

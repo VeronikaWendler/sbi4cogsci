@@ -8,13 +8,16 @@ Every figure comes from `sbi4cogsci_figures`, the same module the notebook
 imports — so a change to a figure updates both, and there is no second copy of
 the plotting code to drift out of sync.
 
-    cd tutorials && uv run python day3_sbi_tools/_bake_slide_figures.py
+    cd tutorials && uv run python day3_sbi_tools/_src/bake_slide_figures.py
 """
 
 import pathlib
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))  # -> tutorials/
+# This file lives in `<day folder>/_src/`, so the day folder is one level up
+# and `tutorials/` — where the shared style and figure modules live — is two.
+_DAY_DIR = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_DAY_DIR.parent))                 # -> tutorials/
 
 import matplotlib
 matplotlib.use("Agg")
@@ -23,7 +26,7 @@ import sbi4cogsci_figures as F
 import sbi4cogsci_style as S
 
 SEED = sum(map(ord, "sbi4cogsci-hierarchy"))
-OUT = pathlib.Path(__file__).parent / "figures"
+OUT = _DAY_DIR / "figures"          # beside the deck, not beside this script
 
 
 def main():

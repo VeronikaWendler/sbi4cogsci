@@ -76,10 +76,10 @@ md`At **v = ${cell.v}**, **a = ${cell.a}**: P(upper) = **${cell.p_upper.toFixed(
 `ssm-simulators` is Cython — `cssm` ships compiled extension modules — so it
 cannot run in a browser, and this website never executes Python. The sliders
 therefore select among simulations run ahead of time by
-`_precompute_ddm_grid.py` (a 17 × 8 grid over drift and boundary separation,
+`_src/precompute_ddm_grid.py` (a 17 × 8 grid over drift and boundary separation,
 78 KB of JSON). Regenerate with:
 
 ```bash
-cd tutorials && uv run python day2_bayes_toolkit/_precompute_ddm_grid.py
+cd tutorials && uv run python day2_bayes_toolkit/_src/precompute_ddm_grid.py
 ```
 :::

@@ -54,8 +54,46 @@ following along live, run cells as you go rather than "Run All" at the start.
 - `mcmc-and-identifiability.ipynb` — session 4. What MCMC is actually doing,
   a hand-written Metropolis sampler, and what makes a posterior hard — using
   a DDM whose parameters stop being separately identifiable.
+- `ddm-explorer.qmd` — a standalone interactive figure (OJS) driven by the
+  precomputed `ddm_grid.json`.
 - `../sbi4cogsci_style.py` — shared plot style. Colours are semantic: one
   meaning per colour across all five Fengler sessions.
 
 Exercises are inline, with solutions in collapsed `<details>` blocks. Poll
 prompts are marked with **Poll** and are run live in the room.
+
+## Editing these notebooks
+
+**Do not edit the `.ipynb` files directly — your changes will be overwritten.**
+
+Each notebook is generated from a percent-format Python source in `_src/`:
+
+```
+_src/pymc-intro.py     <- edit this
+pymc-intro.ipynb       <- generated; committed with outputs because the
+                          Pages CI has no Python and never executes anything
+```
+
+Rebuild after editing:
+
+```bash
+cd tutorials && ./build_notebooks.sh day2_bayes_toolkit/_src/pymc-intro.py
+```
+
+or with no arguments to rebuild every tutorial. The script converts the source
+with jupytext and then executes it with nbconvert, so the committed notebook
+always carries real output.
+
+The split exists because a `.ipynb` diff is unreviewable — a one-line change to
+a plot arrives as thousands of lines of re-encoded PNG. The `.py` is the
+readable history. `_src/` is kept off the site twice over: the render globs in
+`_quarto.yml` are one level deep, and Quarto ignores any path segment starting
+with `_`.
+
+Keep the source in `_src/` rather than beside its notebook. A same-stem `.py`
+sitting *next to* a `.ipynb` makes Quarto drop the page — it still prints
+`Output created` and writes no file.
+
+`_src/precompute_ddm_grid.py` regenerates the JSON behind `ddm-explorer.qmd`;
+that page is the one thing here you can edit directly, since it has no notebook
+source.

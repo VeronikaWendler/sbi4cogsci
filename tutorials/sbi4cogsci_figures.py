@@ -2,8 +2,9 @@
 
 Written once, used three ways:
 
-1. imported by `day3_sbi_tools/_hierarchical-mcmc.py` (the notebook),
-2. baked to PNG for `hierarchical-mcmc-slides.qmd` by `_bake_slide_figures.py`,
+1. imported by `day3_sbi_tools/_src/hierarchical-mcmc.py` (the notebook),
+2. baked to PNG for `hierarchical-mcmc-slides.qmd` by
+   `day3_sbi_tools/_src/bake_slide_figures.py`,
 3. ready for marimo — see the shape rule below.
 
 **The shape rule.** Expensive *computation* and cheap *plotting* are separate
