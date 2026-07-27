@@ -204,7 +204,97 @@ fig.tight_layout()
 # </details>
 
 # %% [markdown]
-# ### The knob that decides everything
+# ### The same mixture, pulled apart
+#
+# That worked because the two modes **overlap**: at $\theta = 0$ the density is
+# low but not negligible, so a chain crossing the valley is occasionally
+# accepted. Push the modes apart and keep everything else identical, and the
+# sampler stops working — completely, and quietly.
+
+# %%
+def log_target_split(theta):
+    """The same two-component mixture, with the modes moved to -6 and +6."""
+    x = theta[0]
+    return np.log(np.exp(-0.5 * ((x - 6.0) / 0.6) ** 2)
+                  + 0.6 * np.exp(-0.5 * ((x + 6.0) / 0.6) ** 2))
+
+
+# Four chains, TWO started in each mode — the point is what each one does.
+starts = [-6.0, -6.0, 6.0, 6.0]
+split_chains = np.stack([
+    metropolis(log_target_split, [s], n_steps=20_000, step_size=1.5,
+               seed=RANDOM_SEED + i)[0][2_000:, 0]
+    for i, s in enumerate(starts)])
+
+for i, (s, ch) in enumerate(zip(starts, split_chains)):
+    print(f"  chain {i} started at {s:+.0f}:  "
+          f"{np.mean(ch > 0):.1%} of its draws in the RIGHT mode")
+
+TRUE_RIGHT_WEIGHT = 1.0 / 1.6         # weights are 1.0 and 0.6
+print(f"\npooled estimate of P(right mode) = {np.mean(split_chains > 0):.3f}"
+      f"   (truth {TRUE_RIGHT_WEIGHT:.3f})")
+
+# %%
+fig, axes = plt.subplots(1, 2, figsize=(11, 3.8),
+                         gridspec_kw={"width_ratios": [1.4, 1]})
+
+ax = axes[0]
+for i, ch in enumerate(split_chains):
+    ax.plot(ch[:4000], lw=0.6, alpha=0.85,
+            color=S.PRIMARY if starts[i] > 0 else S.NAIVE)
+ax.set(title="Four chains, and not one of them moves",
+       xlabel="draw", ylabel=r"$\theta$")
+
+ax = axes[1]
+grid_s = np.linspace(-9, 9, 500)
+dens_s = np.exp([log_target_split([g]) for g in grid_s])
+dens_s /= np.trapezoid(dens_s, grid_s)
+ax.hist(split_chains.ravel(), bins=120, density=True, color=S.PRIMARY,
+        alpha=0.75, label="pooled samples")
+ax.plot(grid_s, dens_s, color=S.TRUTH, ls="--", lw=2, label="true density")
+ax.set(title="...so the weights come out wrong", xlabel=r"$\theta$",
+       ylabel="density")
+ax.legend(fontsize=9)
+fig.tight_layout()
+
+# %% [markdown]
+# Every chain stays in the mode it started in for all 20,000 draws. Each one,
+# on its own, looks **perfectly healthy**: it is stationary, it mixes briskly
+# within its mode, and its acceptance rate is fine. Nothing in a single chain
+# says "there is another mode over there."
+#
+# Pooling them does not rescue the answer either — it reports the two modes as
+# equally likely, because we happened to start two chains in each, when the
+# truth is 0.625 / 0.375. **The estimate is an artifact of where we started.**
+
+# %%
+dt_split = az.convert_to_datatree({"x": split_chains})
+print(f"R-hat = {float(az.rhat(dt_split, var_names=['x']).x):.2f}"
+      "     (want < 1.01)")
+print(f"ESS   = {float(az.ess(dt_split, var_names=['x']).x):.1f}"
+      f"      out of {split_chains.size:,} draws")
+
+# %% [markdown]
+# <details class="sbi-key" open>
+# <summary>🔑 <b>R-hat only catches this because the chains disagree</b></summary>
+#
+# $\hat{R}$ compares the variance *between* chains to the variance *within*
+# them. Here the between-chain variance is enormous, so it fires loudly.
+#
+# But notice the precondition: **we started the chains in different places.**
+# Run four chains from the same initial value and they would all find the same
+# mode, agree with each other perfectly, and report $\hat{R} \approx 1.00$ for
+# an answer that is completely wrong. This is the single best argument for
+# **multiple chains from dispersed starting points**, and it is why PyMC
+# defaults to four chains with jittered initialisation rather than one.
+#
+# Gradients do not save you here either. NUTS follows the geometry it is
+# standing in, and there is no gradient path across a region of zero density —
+# it is faster and better-behaved than what we wrote, and just as trapped.
+# Genuinely multimodal posteriors need a different tool: tempering, nested
+# sampling, or an explicitly enumerated mixture.
+#
+# </details>
 #
 # `step_size` is the whole art of a random-walk sampler. Too small and every
 # proposal is accepted but the chain barely moves; too large and almost
@@ -281,6 +371,44 @@ for rho in RHOS:
 # At $\rho = 0.99$ the target is **fourteen times longer than it is wide**. A
 # random-walk proposal is a *circle* — the same size step in every direction —
 # and no circle fits a shape like that.
+#
+# Before measuring anything, watch it happen. Same sampler, same step size, same
+# number of moves; only $\rho$ changes.
+
+
+# %%
+def plot_path(ax, path, rho, title):
+    """Chain path over the target's contours. Used for every sampler here."""
+    g = np.linspace(-3.5, 3.5, 200)
+    X0, X1 = np.meshgrid(g, g)
+    Z = np.exp(-(X0**2 - 2 * rho * X0 * X1 + X1**2) / (2 * (1 - rho**2)))
+    ax.contour(X0, X1, Z, levels=5, colors=S.MUTED, linewidths=0.8)
+    ax.plot(path[:, 0], path[:, 1], "-", color=S.NAIVE, lw=1.1, alpha=0.9)
+    ax.plot(path[:, 0], path[:, 1], "o", color=S.NAIVE, ms=2.5, ls="none")
+    ax.plot(path[0, 0], path[0, 1], "o", color=S.DIVERGENT, ms=8, label="start")
+    ax.set(title=title, xlabel="$x_0$", ylabel="$x_1$",
+           xlim=(-3.5, 3.5), ylim=(-3.5, 3.5))
+
+
+N_SHOW = 300
+fig, axes = plt.subplots(1, 3, figsize=(13, 4.4), sharex=True, sharey=True)
+for ax, rho in zip(axes, RHOS):
+    path, _ = metropolis(log_target_gaussian(rho), start=[0.0, 0.0],
+                         n_steps=N_SHOW, step_size=1.0, seed=RANDOM_SEED)
+    ax.plot([], [])
+    plot_path(ax, path, rho, rf"$\rho$ = {rho}")
+axes[0].legend(fontsize=9, loc="upper left")
+fig.suptitle(f"{N_SHOW} Metropolis moves, step size 1.0 throughout", y=1.02)
+fig.tight_layout()
+
+# %% [markdown]
+# Read those left to right. At $\rho = 0$ the chain wanders freely over the
+# whole target. At $\rho = 0.99$ it is pinned inside a thin diagonal sliver and
+# barely travels its length — the same 300 moves cover a small fraction of the
+# distribution. The proposal has not changed; only the shape it is trying to
+# explore has.
+#
+# Now put a number on that.
 
 # %%
 def run_chains(log_target, step_size, n_chains=4, n_steps=25_000, warmup=5_000):
@@ -381,26 +509,49 @@ n_draws = chains_bad[..., 0].size
 ess_bad = ess_per_draw(chains_bad, ALONG)
 
 print(f"step_size 0.05, rho 0.99:  acceptance {acc_bad:.1%}")
-print(f"  sd(x0) from the chain = {chains_bad[..., 0].std():.3f}"
+print(f"  sd(x0) pooled over chains = {chains_bad[..., 0].std():.3f}"
       "   (the truth is exactly 1.000)")
-print(f"  ESS/draw along the ridge = {ess_bad:.5f}")
-print(f"  -> about {ess_bad * n_draws:.0f} independent draws out of {n_draws:,}")
+print(f"  ESS/draw along the ridge  = {ess_bad:.5f}")
+print(f"  -> about {ess_bad * n_draws:.0f} independent draws out of {n_draws:,}\n")
+
+# The same quantity, chain by chain — and where each chain ended up.
+along_bad = chains_bad @ ALONG
+for c in range(along_bad.shape[0]):
+    print(f"  chain {c}: mean along the ridge {along_bad[c].mean():+.2f}, "
+          f"sd {along_bad[c].std():.2f}   (true sd {np.sqrt(1 + 0.99):.2f})")
 
 # %% [markdown]
 # A marginal standard deviation in the right neighbourhood is **not** evidence
 # that the chain worked. This one lands within a few percent of the truth while
-# containing a couple of dozen genuinely independent samples — and it does so
-# because the marginal it got roughly right is the direction it was *not*
-# struggling in. Check ESS and $\hat{R}$; do not eyeball whether the numbers
-# look plausible.
+# containing a couple of dozen genuinely independent draws.
+#
+# And look at *why* it lands there, because the reason is not the comforting
+# one. At $\rho = 0.99$ the variance of $x_0$ is **99.5% the along-the-ridge
+# direction** — the hard one — since $\operatorname{Var} = (1+\rho)/2$ along
+# against $(1-\rho)/2$ across. So the marginal that came out right is precisely
+# the direction the chain could not explore.
+#
+# The per-chain numbers show the trick. Not one of the four gets the width
+# right, and they do not even err in the same direction — three are too narrow
+# because they only saw part of the ridge, one is too wide. Their *means* also
+# sit at different points along the ridge, and that between-chain scatter refills
+# roughly the variance the narrow ones are missing. Pooling manufactures a
+# plausible number out of four separately wrong ones.
+#
+# Which is the argument for doing both: pool several chains **and** check
+# $\hat{R}$, which is what notices that the chains disagree. Do not eyeball
+# whether a summary looks plausible.
 
 # %% [markdown]
 # ## 4. The same target, in PyMC
 #
-# Two things are worth showing here. First, **PyMC gives you Metropolis too** —
-# the sampler we hand-wrote is a library call, and swapping it in is one
-# argument. Second, and the reason this section exists: **NUTS crosses this
-# target without being tuned at all.**
+# Two things are worth showing here. First, **PyMC gives you Metropolis too**,
+# one argument away. It is not quite the sampler we wrote: for a vector-valued
+# variable `pm.Metropolis` updates **one coordinate at a time**, with its own
+# accept/reject for each — the coordinate-wise cousin of our blocked proposal.
+# Hold that thought; section 5 is about what axis-aligned moves cost you.
+# Second, and the reason this section exists: **NUTS crosses this target
+# without being tuned at all.**
 
 # %%
 def gaussian_pymc_model(rho):
@@ -436,96 +587,20 @@ print("NUTS:")
 print(az.summary(idata_nuts, kind="diagnostics").to_string())
 
 # %% [markdown]
-# ### How far does this go?
-#
-# Push the correlation further and measure both samplers properly — including
-# whether the answer is *right*, not merely how fast it arrives.
+# NUTS pays for the bad geometry in **compute**, not in a wrong answer: it takes
+# longer trajectories to cross the ridge. That price is visible in its own
+# sampler statistics.
 
 # %%
-def assess(idata, rho, sampler, seconds):
-    x = idata.posterior.dataset["x"].values              # (chain, draw, 2)
-    stats = idata["sample_stats"].dataset
-    return {
-        "rho": rho, "sampler": sampler,
-        "ESS/draw along": ess_per_draw(x, ALONG),
-        # the honest check: is the posterior the right WIDTH?
-        "sd along": float((x @ ALONG).std()),
-        "sd true": float(np.sqrt(1 + rho)),
-        "seconds": seconds,
-        # NUTS reports gradient evaluations per draw; Metropolis has no analogue
-        "grad/draw": float(stats["n_steps"].mean()) if "n_steps" in stats else np.nan,
-    }
-
-
-rows = []
-for rho in [0.9, 0.99, 0.999]:
-    for sampler in ["Metropolis", "NUTS"]:
-        t0 = time.time()
-        with gaussian_pymc_model(rho):
-            if sampler == "Metropolis":
-                idata = pm.sample(draws=2000, tune=2000, chains=2, cores=1,
-                                  step=pm.Metropolis(), progressbar=False,
-                                  random_seed=RANDOM_SEED)
-            else:
-                idata = pm.sample(draws=2000, tune=2000, chains=2, cores=1,
-                                  nuts_sampler="pymc", progressbar=False,
-                                  random_seed=RANDOM_SEED)
-        rows.append(assess(idata, rho, sampler, time.time() - t0))
-
-comparison = pd.DataFrame(rows)
-print(comparison.to_string(index=False, float_format=lambda v: f"{v:9.3f}"))
+n_steps_mean = float(idata_nuts["sample_stats"].dataset["n_steps"].mean())
+print(f"NUTS leapfrog steps per draw at rho = 0.99: {n_steps_mean:.1f}")
+print("  (Metropolis has no analogue — it takes one cheap step and rejects it.)")
 
 # %% [markdown]
-# Read the `sd along` column against `sd true` beside it before anything else.
+# That is the trade you want: ill-conditioning turns into a **larger bill**
+# rather than into a confident wrong number. Metropolis, on the same target,
+# stayed cheap and reported a posterior it had not actually explored.
 
-# %%
-fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-rho_grid = comparison["rho"].unique()
-
-ax = axes[0]
-for sampler, colour in [("Metropolis", S.NAIVE), ("NUTS", S.PRIMARY)]:
-    b = comparison[comparison.sampler == sampler]
-    ax.plot(b["rho"], b["ESS/draw along"], "o-", color=colour, label=sampler)
-ax.set(yscale="log", xlabel=r"correlation $\rho$", ylabel="ESS per draw",
-       title="Efficiency along the ridge")
-ax.legend(fontsize=9)
-
-ax = axes[1]
-for sampler, colour in [("Metropolis", S.NAIVE), ("NUTS", S.PRIMARY)]:
-    b = comparison[comparison.sampler == sampler]
-    ax.plot(b["rho"], b["sd along"], "o-", color=colour, label=sampler)
-ax.plot(rho_grid, np.sqrt(1 + rho_grid), "--", color=S.TRUTH, lw=1.5,
-        label="true width")
-ax.set(xlabel=r"correlation $\rho$", ylabel="recovered sd along the ridge",
-       title="...and whether the answer is right")
-ax.legend(fontsize=9)
-fig.tight_layout()
-
-# %% [markdown]
-# <details class="sbi-key" open>
-# <summary>🔑 <b>Slow is survivable; unreliable is not</b></summary>
-#
-# At high correlation Metropolis does not merely mix slowly — the width it
-# reports stops being **reliable**. Compare its `sd along` to `sd true` at each
-# row: it misses in one direction at one correlation and the other direction at
-# the next, by margins of several percent to over ten, with no pattern. NUTS
-# tracks the truth throughout.
-#
-# That unpredictability is the danger, and it is worse than a consistent bias
-# would be. A chain that has not travelled a direction is reporting a summary of
-# the part of that direction it happened to visit — which could be too narrow
-# (it never reached the ends) or too wide (it wandered off and got stuck). You
-# cannot tell which from the chain, and nothing raises an error. That is why
-# $\hat{R}$ and ESS are not optional.
-#
-# NUTS instead keeps its ESS per draw roughly flat. What it pays is **compute**:
-# the `grad/draw` column climbs as the geometry worsens, because it needs longer
-# trajectories to cross the ridge. Ill-conditioning turns into a larger bill
-# rather than into a wrong number — that is the trade you want.
-#
-# </details>
-
-# %% [markdown]
 # ## 5. *Advanced:* Gibbs has the same problem, for a different reason
 #
 # *(Skip if we are short on time — nothing later depends on it.)*
@@ -568,48 +643,30 @@ gibbs_chains = {rho: np.stack([gibbs(rho, seed=RANDOM_SEED + c)[5_000:]
                                for c in range(4)])
                 for rho in RHOS}
 
-rows = []
-for rho in RHOS:
-    ch = gibbs_chains[rho]
-    # Lag-1 autocorrelation via the ArviZ accessor. The `draw` axis of the
-    # RESULT is the lag, so index 1 is lag one.
-    dt = az.convert_to_datatree({"x": ch[..., 0]})
-    lag1 = float(dt.azstats.autocorr(dim="draw")["x"].isel(chain=0, draw=1))
-    rows.append({"rho": rho, "lag-1 of x0": lag1, "rho^2 (theory)": rho**2,
-                 "ESS/draw along": ess_per_draw(ch, ALONG),
-                 "ESS/draw across": ess_per_draw(ch, ACROSS)})
-print(pd.DataFrame(rows).to_string(index=False, float_format=lambda v: f"{v:10.4f}"))
+# For this target Gibbs turns each coordinate into an AR(1) process with lag-1
+# correlation exactly rho^2 — so a sampler with NO knobs and a 100% acceptance
+# rate is still provably slow here, by an amount you can write down in advance.
+print(f"at rho = 0.99, Gibbs ESS/draw:  "
+      f"ACROSS the ridge {ess_per_draw(gibbs_chains[0.99], ACROSS):.3f}   "
+      f"ALONG it {ess_per_draw(gibbs_chains[0.99], ALONG):.4f}")
 
 # %% [markdown]
-# Two things in that table.
-#
-# **The theory is exact.** For this target Gibbs turns each coordinate into an
-# AR(1) process with lag-1 correlation exactly $\rho^2$, and the measurement
-# lands on it. So a sampler with no knobs and a 100% acceptance rate is
-# nonetheless *guaranteed* to be slow here, by an amount you can write down
-# before running it.
-#
-# **The failure is directional.** Gibbs samples *across* the ridge essentially
-# perfectly — ESS per draw near 1, as good as independent draws — while being
-# about a hundred times subsampled *along* it. It is not a bad sampler. It is a
-# sampler that is excellent in one direction and hopeless in the other.
+# Excellent in one direction, hopeless in the other — and no setting exists
+# that would trade one for the other, because there is no setting.
 #
 # The picture shows why:
 
 # %%
-_, path = gibbs(0.99, n_steps=40, seed=RANDOM_SEED, record_path=True)
+# Same helper as the Metropolis paths above, so the two are directly comparable.
+_, path_gibbs = gibbs(0.99, n_steps=40, seed=RANDOM_SEED, record_path=True)
+path_mh, _ = metropolis(log_target_gaussian(0.99), start=[0.0, 0.0],
+                        n_steps=80, step_size=1.0, seed=RANDOM_SEED)
 
-fig, ax = plt.subplots(figsize=(6.0, 5.4))
-g = np.linspace(-3.5, 3.5, 200)
-X0, X1 = np.meshgrid(g, g)
-Z = np.exp(-(X0**2 - 2 * 0.99 * X0 * X1 + X1**2) / (2 * (1 - 0.99**2)))
-ax.contour(X0, X1, Z, levels=5, colors=S.MUTED, linewidths=0.8)
-ax.plot(path[:, 0], path[:, 1], "-", color=S.NAIVE, lw=1.1, alpha=0.9)
-ax.plot(path[:, 0], path[:, 1], "o", color=S.NAIVE, ms=2.5, ls="none")
-ax.plot(path[0, 0], path[0, 1], "o", color=S.DIVERGENT, ms=8, label="start")
-ax.set(title=r"40 Gibbs sweeps at $\rho = 0.99$", xlabel="$x_0$", ylabel="$x_1$",
-       xlim=(-3.5, 3.5), ylim=(-3.5, 3.5))
-ax.legend(fontsize=9)
+fig, axes = plt.subplots(1, 2, figsize=(11, 4.8), sharex=True, sharey=True)
+plot_path(axes[0], path_mh, 0.99, r"Metropolis, 80 moves")
+plot_path(axes[1], path_gibbs, 0.99, r"Gibbs, 40 sweeps")
+axes[0].legend(fontsize=9, loc="upper left")
+fig.suptitle(r"Two samplers, the same ridge at $\rho = 0.99$", y=1.02)
 fig.tight_layout()
 
 # %% [markdown]
@@ -619,30 +676,17 @@ fig.tight_layout()
 # rather than by its length. Nothing here is tunable: the constraint is the
 # **coordinate system**, not the step length.
 
-# %%
-step_along = np.diff(gibbs_chains[0.99][0] @ ALONG)
-print("at rho = 0.99, per Gibbs sweep:")
-print(f"  rms movement ALONG the ridge : {step_along.std():.3f}")
-print(f"  the ridge's own length (sd)  : {np.sqrt(1 + 0.99):.3f}")
-print(f"  -> one sweep covers {step_along.std() / np.sqrt(1.99):.1%} of the ridge")
-
 # %% [markdown]
 # <details class="sbi-note">
-# <summary>📝 <b>Is Gibbs worse than Metropolis here? No — and that is the point</b></summary>
+# <summary>📝 <b>Two very different algorithms, one ellipse</b></summary>
 #
-# Compare the two tables honestly. Along the ridge Gibbs lands in much the same
-# place as a *well-tuned* random-walk Metropolis, and across the ridge it is
-# comfortably better — and it got there with no step-size sweep at all. That is
-# a genuine practical advantage.
-#
-# But it is still two orders of magnitude short of independent sampling, and
-# **no setting exists that would fix it**, because there is no setting. Two
-# quite different algorithms, defeated by the same ellipse. That is what tells
+# Gibbs has nothing to tune and rejects nothing, and it is still two orders of
+# magnitude short of independent sampling along the ridge. That is what tells
 # you the problem was never the algorithm.
 #
-# One connection worth noticing: `pm.Metropolis()` in the previous section also
-# updates a vector one coordinate at a time. Its moves are axis-aligned too, so
-# it inherits precisely this weakness.
+# One connection worth noticing: `pm.Metropolis()` from the previous section
+# also updates a vector one coordinate at a time, so its moves are
+# axis-aligned too and it inherits precisely this weakness.
 #
 # </details>
 
@@ -721,20 +765,7 @@ fig.suptitle("Every parameter pair, both designs", y=1.02)
 
 # %% [markdown]
 # In the balanced design the correlations are moderate and *structured*. In the
-# extreme design one pair dominates everything else. Rank them and look:
-
-# %%
-def ranked_pairs(d):
-    out = []
-    for i, p in enumerate(PARAMS):
-        for q in PARAMS[i + 1:]:
-            out.append((f"{p}-{q}", np.corrcoef(d[p], d[q])[0, 1]))
-    return sorted(out, key=lambda kv: -abs(kv[1]))
-
-
-for label in ["balanced", "extreme"]:
-    pairs = ranked_pairs(posteriors[label])
-    print(f"{label:9s} " + "   ".join(f"{nm} {r:+.2f}" for nm, r in pairs))
+# extreme design one pair dominates everything else: `a` with `z`, at +0.88.
 
 # %% [markdown]
 # The strongest pair in the extreme design is **`a` with `z`** — boundary
@@ -787,11 +818,11 @@ for name, f in [
 # reappears.
 
 # %%
-fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.4))
 for col, label in enumerate(["balanced", "extreme"]):
     d = posteriors[label]
 
-    ax = axes[0, col]
+    ax = axes[col]
     r = np.corrcoef(d["a"], d["z"])[0, 1]
     ax.plot(d["a"], d["z"], "o", color=S.PRIMARY, ms=2.5, alpha=0.25, ls="none",
             label="posterior draws")
@@ -800,25 +831,13 @@ for col, label in enumerate(["balanced", "extreme"]):
            xlabel="boundary separation $a$", ylabel="start point $z$")
     ax.legend(loc="lower right", fontsize=9)
 
-    ax = axes[1, col]
-    r = np.corrcoef(d["v"], d["t"])[0, 1]
-    ax.plot(d["v"], d["t"], "o", color=S.NAIVE, ms=2.5, alpha=0.25, ls="none",
-            label="posterior draws")
-    S.truth_point(ax, TRUE[f"v_{label}"], TRUE["t"])
-    ax.set(title=f"{label}:  corr(v, t) = {r:+.2f}",
-           xlabel="drift $v$", ylabel="non-decision time $t$")
-    ax.legend(loc="upper right", fontsize=9)
-fig.suptitle("The two trade-offs, in both designs", y=1.00)
+fig.suptitle("The same ridge, in both designs", y=1.02)
 fig.tight_layout()
 
 # %% [markdown]
-# Left column: compact blobs sitting on the truth. Right column: long thin
-# ridges. The truth is on each ridge — but so is every other point along it,
-# and the data have no way to say which.
-#
-# The second row is the same failure in the time domain rather than the
-# geometry: total response time is non-decision time plus decision time, and
-# the fit can shuffle duration between the two while keeping the total fixed.
+# Left: a compact blob sitting on the truth. Right: a long thin ridge. The
+# truth is on that ridge — but so is every other point along it, and the data
+# have no way to say which.
 #
 # ### What that costs you
 
@@ -850,20 +869,16 @@ fig.suptitle("Same model, same number of trials — only the error rate differs"
              y=1.03)
 fig.tight_layout()
 
-# %%
-for k in PARAMS:
-    b, e = posteriors["balanced"][k].std(), posteriors["extreme"][k].std()
-    print(f"sd({k}): {b:.4f} -> {e:.4f}   ({e / b:5.1f}x wider)")
-
 # %% [markdown]
 # <details class="sbi-key" open>
 # <summary>🔑 <b>High accuracy is bad data for parameter estimation</b></summary>
 #
-# This is the counterintuitive headline. Compare the two histograms in each
-# panel: the near-perfect dataset gives posteriors several times wider on every
-# parameter, lying along a ridge rather than filling a blob. Nothing is wrong
-# with the sampler and nothing is wrong with the model — **the experiment did
-# not collect the information**.
+# This is the counterintuitive headline, and the damage is **targeted** rather
+# than uniform. Read the panel titles: `a` blows up by an order of magnitude
+# and `z` several-fold, while `t` is essentially untouched. Those are exactly
+# the parameters that a design where one boundary is never reached cannot see.
+# Nothing is wrong with the sampler and nothing is wrong with the model —
+# **the experiment did not collect the information**.
 #
 # Notice that `t` is barely affected while `a` blows up. The damage is not
 # spread evenly.

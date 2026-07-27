@@ -146,6 +146,46 @@ def label_choice_axis(ax, rt_max=4.0, lower="lower boundary (-1)",
     ax.set_xlabel(f"← {lower}     response time (s)     {upper} →")
 
 
+def posterior_diagnostics(idata, var_names, *, title=None,
+                          trace_size=(9.5, None), pair_size=(7.0, 7.0)):
+    """The same two looks at every fit: traces, then the joint.
+
+    Both come from ArviZ (`plot_trace_dist` and `plot_pair`) rather than being
+    hand-rolled — this only fixes the sizing, the divergence styling and the
+    titles, so that every model in a notebook is inspected identically and the
+    plots can be compared across fits at a glance.
+
+    **Divergent transitions are drawn on the pair plot** in the palette's
+    DIVERGENT colour. If they cluster anywhere rather than scattering, that
+    location is the part of the posterior your sampler could not handle.
+
+    Returns (trace_figure, pair_figure).
+    """
+    import arviz as az
+    import matplotlib.pyplot as plt
+
+    az.plot_trace_dist(idata, var_names=var_names, combined=True)
+    fig_trace = plt.gcf()
+    w, h = trace_size
+    fig_trace.set_size_inches(w, h if h is not None else 1.5 * len(var_names) + 0.5)
+    if title:
+        fig_trace.suptitle(f"{title} — marginals and traces", y=1.02)
+    fig_trace.tight_layout()
+
+    # `divergence` is drawn with matplotlib's `scatter`, so the size keyword is
+    # `s`, not `markersize` (which raises).
+    az.plot_pair(idata, var_names=var_names, marginal=True,
+                 visuals={"divergence": {"color": DIVERGENT, "s": 14,
+                                         "alpha": 0.9}})
+    fig_pair = plt.gcf()
+    fig_pair.set_size_inches(*pair_size)
+    if title:
+        fig_pair.suptitle(f"{title} — joint posterior", y=1.01)
+    fig_pair.tight_layout()
+
+    return fig_trace, fig_pair
+
+
 def annotate(ax, text, xy, xytext, **kw):
     """A muted callout arrow, for pointing at the interesting part of a figure."""
     return ax.annotate(text, xy=xy, xytext=xytext, color=MUTED, fontsize=10,

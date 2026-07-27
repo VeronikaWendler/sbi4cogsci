@@ -179,6 +179,7 @@ coh_idx = data["coherence"].cat.codes.to_numpy()
 emp_idx = data["emphasis"].cat.codes.to_numpy()
 
 COORDS = {"coherence": CONDITIONS, "emphasis": EMPHASES}
+PARAMS = ["v", "a", "z", "t"]
 
 
 def fit(model, seed=RANDOM_SEED):
@@ -198,7 +199,35 @@ with pm.Model(coords=COORDS) as m1_flat:
     DDM("obs", v=v, a=a, z=z, t=t, observed=observed)
 
 idata_flat = fit(m1_flat)
-print(az.summary(idata_flat, var_names=["v", "a", "z", "t"], kind="stats").to_string())
+print(az.summary(idata_flat, var_names=PARAMS, kind="stats").to_string())
+
+# %% [markdown]
+# ### Always look at the chains, not just the summary
+#
+# A summary table cannot tell you whether the numbers in it mean anything. Two
+# plots settle that, and we will run **the same two after every fit** in this
+# notebook so they can be compared at a glance:
+#
+# 1. **Marginals and traces.** The trace should look like a fuzzy caterpillar
+#    with no trend and no long flat stretches, and the chains should sit on top
+#    of one another. Anything else means the sampler has not settled.
+# 2. **The joint posterior.** This is the one people skip, and it is the one
+#    that carries the news. Marginals hide correlation; the pair plot shows it.
+#    **Divergent transitions are drawn in red** — if they cluster somewhere
+#    rather than scattering, that region is what your sampler could not handle.
+
+# %%
+S.posterior_diagnostics(idata_flat, PARAMS, title="Model 1: flat")
+
+# %% [markdown]
+# Clean caterpillars, overlapping chains, no red. The sampler did its job — the
+# model is a poor description of the data, which is a different problem and one
+# no amount of sampling fixes.
+#
+# In the joint, notice `a` and `t` leaning against each other. Both push the RT
+# distribution to the right, so the data constrains their *combination* better
+# than either alone. That is the mild version of what Session 4 turns into a
+# real failure.
 
 # %% [markdown]
 # It sampled, it converged, and the numbers look perfectly reasonable. That is
@@ -296,6 +325,10 @@ pred_drift = cell_predictions(idata_drift, m2_drift)
 compare_plot(pred_drift, "Model 2: drift by coherence")
 
 # %%
+print(az.summary(idata_drift, var_names=PARAMS, kind="stats").to_string())
+S.posterior_diagnostics(idata_drift, PARAMS, title="Model 2")
+
+# %%
 # Model 3: drift varies by coherence AND boundary varies by emphasis.
 with pm.Model(coords=COORDS) as m3_both:
     # Priors
@@ -309,6 +342,10 @@ with pm.Model(coords=COORDS) as m3_both:
 idata_both = fit(m3_both)
 pred_both = cell_predictions(idata_both, m3_both)
 compare_plot(pred_both, "Model 3: drift by coherence, boundary by emphasis")
+
+# %%
+print(az.summary(idata_both, var_names=PARAMS, kind="stats").to_string())
+S.posterior_diagnostics(idata_both, PARAMS, title="Model 3")
 
 # %% [markdown]
 # Model 2 captures the accuracy pattern and still misses the RT pattern —
