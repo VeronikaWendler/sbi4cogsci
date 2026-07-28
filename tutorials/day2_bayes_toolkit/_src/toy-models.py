@@ -354,17 +354,24 @@ print(f"PyMC's default start for t: {_default_t:.3f} s   <- already past it")
 def cell_predictions(idata, model, n_keep=200):
     """Posterior-predictive accuracy and mean RT, per design cell.
 
-    `sample_posterior_predictive` has no `draws` argument — it uses every
-    posterior draw — so we thin afterwards to keep this quick.
+    `pm.sample_posterior_predictive` has no `draws` argument: it regenerates the
+    dataset once per posterior draw, all 3,200 of them. At 1,500 trials that is
+    4.8 million simulated trials for a figure that needs a couple of hundred —
+    about 95 seconds, against 8 for the fit itself.
+
+    So thin the posterior BEFORE handing it over, not after. Slicing the `draw`
+    axis is the whole fix, and it takes ~6 seconds instead.
     """
+    post = idata.posterior.dataset
+    n_draws = post.sizes["chain"] * post.sizes["draw"]
+    step = max(1, n_draws // n_keep)
+    thinned = idata.sel(draw=slice(None, None, step))
+
     with model:
-        ppc = pm.sample_posterior_predictive(idata, random_seed=RANDOM_SEED,
+        ppc = pm.sample_posterior_predictive(thinned, random_seed=RANDOM_SEED,
                                              progressbar=False)
     sim = ppc["posterior_predictive"].dataset["obs"].values   # (chain, draw, obs, 2)
     sim = sim.reshape(-1, sim.shape[-2], sim.shape[-1])
-    if sim.shape[0] > n_keep:                       # thin for speed
-        sel = np.linspace(0, sim.shape[0] - 1, n_keep).astype(int)
-        sim = sim[sel]
     out = []
     for coh in CONDITIONS:
         for emp in EMPHASES:
