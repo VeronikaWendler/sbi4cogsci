@@ -35,7 +35,7 @@ them actually falls, and per-parameter parameterization in HSSM.
 
 ## Recurrent networks for dynamic data (12:00)
 
-- **Instructor:** Tianhao (Tim) Pan
+- **Instructor:** Ti-Fen Pan
 - **Stack:** Google Colab — nothing to install
 - **Run:** open the Colab link below
 
