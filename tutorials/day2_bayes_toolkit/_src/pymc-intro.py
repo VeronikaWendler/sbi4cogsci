@@ -62,7 +62,14 @@ def _fetch(module):
 
 
 if IN_COLAB:
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pymc>=6.2", "arviz>=1.2", "bambi>=0.19"],
+    # numba>=0.61 is REQUIRED, not cosmetic. pytensor resolves linker="auto" to
+    # its numba backend, and numba renamed FunctionModel's first field
+    # addr -> c_addr in 0.61. Colab preinstalls an older numba, and pytensor
+    # declares numba only as an optional extra, so pip leaves it in place and
+    # any MvNormal (SolveTriangular has no C implementation) dies with
+    # KeyError: "FunctionModel does not have a field named 'c_addr'".
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                    "numba>=0.61", "pymc>=6.2", "arviz>=1.2", "bambi>=0.19"],
                    check=True)
     # `dot` is a system binary, not a Python package.
     subprocess.run(["apt-get", "-qq", "install", "-y", "graphviz"],
