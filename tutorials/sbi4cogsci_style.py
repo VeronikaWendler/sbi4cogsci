@@ -148,7 +148,7 @@ def label_choice_axis(ax, rt_max=4.0, lower="lower boundary (-1)",
 
 def posterior_diagnostics(idata, var_names, *, title=None, pair_var_names=None,
                           pair_coords=None, trace_size=(9.5, None),
-                          pair_size=(7.0, 7.0)):
+                          pair_size=None):
     """The same two looks at every fit: traces, then the joint.
 
     Both come from ArviZ (`plot_trace_dist` and `plot_pair`) rather than being
@@ -205,7 +205,23 @@ def posterior_diagnostics(idata, var_names, *, title=None, pair_var_names=None,
                  visuals={"divergence": {"color": DIVERGENT, "s": 14,
                                          "alpha": 0.9}})
     fig_pair = plt.gcf()
+    # Size the grid by how many panels it actually has. At a fixed 7x7 inches a
+    # seven-parameter model gets one inch per panel, which squashes every cloud
+    # into a vertical sliver and overprints the tick labels into mush.
+    if pair_size is None:
+        side = max(7.0, 1.55 * n_scalar)
+        pair_size = (side, side)
     fig_pair.set_size_inches(*pair_size)
+    # Three ticks per axis. The default locator picks its count for a full-size
+    # axis, not for one panel of an n-by-n grid, so labels collide as n grows.
+    for ax in fig_pair.axes:
+        ax.locator_params(axis="x", nbins=3)
+        ax.locator_params(axis="y", nbins=3)
+        # Tightly-constrained parameters get labels like "0.900 0.950 1.000",
+        # which still touch at three-to-a-panel. Rotating buys the width back
+        # without dropping to two ticks and losing the sense of the scale.
+        ax.tick_params(axis="x", labelrotation=45, labelsize=8)
+        ax.tick_params(axis="y", labelsize=8)
     if title:
         fig_pair.suptitle(f"{title} — joint posterior", y=1.01)
     fig_pair.tight_layout()

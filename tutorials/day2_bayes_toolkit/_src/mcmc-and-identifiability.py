@@ -129,7 +129,7 @@ print("pymc", pm.__version__, "| arviz", az.__version__)
 # visited proportionally *less*, rather than never.
 
 # %%
-def metropolis(log_target, start, n_steps=20_000, step_size=1.0, seed=0):
+def metropolis(log_target, start, n_steps=100_000, step_size=1.0, seed=0):
     """Random-walk Metropolis. `log_target` need only be correct up to a constant."""
     rng = np.random.default_rng(seed)
     theta = np.atleast_1d(np.asarray(start, dtype=float))
@@ -162,7 +162,7 @@ def log_target_mixture(theta):
 
 
 chain, acc = metropolis(log_target_mixture, start=[0.0], step_size=1.5,
-                        n_steps=40_000, seed=RANDOM_SEED)
+                        n_steps=100_000, seed=RANDOM_SEED)
 print(f"acceptance rate {acc:.2f}")
 
 grid = np.linspace(-4, 5, 400)
@@ -222,7 +222,7 @@ def log_target_split(theta):
 # Four chains, TWO started in each mode — the point is what each one does.
 starts = [-6.0, -6.0, 6.0, 6.0]
 split_chains = np.stack([
-    metropolis(log_target_split, [s], n_steps=20_000, step_size=1.5,
+    metropolis(log_target_split, [s], n_steps=100_000, step_size=1.5,
                seed=RANDOM_SEED + i)[0][2_000:, 0]
     for i, s in enumerate(starts)])
 
@@ -258,7 +258,7 @@ ax.legend(fontsize=9)
 fig.tight_layout()
 
 # %% [markdown]
-# Every chain stays in the mode it started in for all 20,000 draws. Each one,
+# Every chain stays in the mode it started in for all 100,000 draws. Each one,
 # on its own, looks **perfectly healthy**: it is stationary, it mixes briskly
 # within its mode, and its acceptance rate is fine. Nothing in a single chain
 # says "there is another mode over there."
@@ -377,14 +377,20 @@ for rho in RHOS:
 
 
 # %%
-def plot_path(ax, path, rho, title):
-    """Chain path over the target's contours. Used for every sampler here."""
+def plot_path(ax, path, rho, title, alpha=0.9):
+    """Chain path over the target's contours. Used for every sampler here.
+
+    `alpha` fades the path: a 40-step Gibbs staircase wants to be opaque, a
+    300-step scribble wants to be faint or it reads as a solid blob. The start
+    marker stays opaque either way — it is a landmark, not part of the trace.
+    """
     g = np.linspace(-3.5, 3.5, 200)
     X0, X1 = np.meshgrid(g, g)
     Z = np.exp(-(X0**2 - 2 * rho * X0 * X1 + X1**2) / (2 * (1 - rho**2)))
     ax.contour(X0, X1, Z, levels=5, colors=S.MUTED, linewidths=0.8)
-    ax.plot(path[:, 0], path[:, 1], "-", color=S.NAIVE, lw=1.1, alpha=0.9)
-    ax.plot(path[:, 0], path[:, 1], "o", color=S.NAIVE, ms=2.5, ls="none")
+    ax.plot(path[:, 0], path[:, 1], "-", color=S.NAIVE, lw=1.1, alpha=alpha)
+    ax.plot(path[:, 0], path[:, 1], "o", color=S.NAIVE, ms=2.5, ls="none",
+            alpha=min(1.0, alpha + 0.1))
     ax.plot(path[0, 0], path[0, 1], "o", color=S.DIVERGENT, ms=8, label="start")
     ax.set(title=title, xlabel="$x_0$", ylabel="$x_1$",
            xlim=(-3.5, 3.5), ylim=(-3.5, 3.5))
@@ -396,7 +402,7 @@ for ax, rho in zip(axes, RHOS):
     path, _ = metropolis(log_target_gaussian(rho), start=[0.0, 0.0],
                          n_steps=N_SHOW, step_size=1.0, seed=RANDOM_SEED)
     ax.plot([], [])
-    plot_path(ax, path, rho, rf"$\rho$ = {rho}")
+    plot_path(ax, path, rho, rf"$\rho$ = {rho}", alpha=0.35)
 axes[0].legend(fontsize=9, loc="upper left")
 fig.suptitle(f"{N_SHOW} Metropolis moves, step size 1.0 throughout", y=1.02)
 fig.tight_layout()
@@ -587,9 +593,35 @@ print("NUTS:")
 print(az.summary(idata_nuts, kind="diagnostics").to_string())
 
 # %% [markdown]
-# NUTS pays for the bad geometry in **compute**, not in a wrong answer: it takes
-# longer trajectories to cross the ridge. That price is visible in its own
-# sampler statistics.
+# The same two chains as paths, drawn exactly as before — so this is directly
+# comparable to the hand-written sampler above and to Gibbs below. These are
+# post-warmup draws, so both start somewhere sensible; the question is where
+# they go from there.
+
+# %%
+N_SHOW_PYMC = 300
+fig, axes = plt.subplots(1, 2, figsize=(11, 4.8), sharex=True, sharey=True)
+for ax, (name, idt) in zip(axes, [("pm.Metropolis", idata_mh), ("NUTS", idata_nuts)]):
+    path = idt.posterior.dataset["x"].values[0][:N_SHOW_PYMC]     # chain 0
+    # A rejected proposal repeats the current point, so an "exactly repeated"
+    # draw is a wasted iteration. NUTS has none: every draw is a new point.
+    repeated = np.mean(np.all(np.diff(path, axis=0) == 0, axis=1))
+    plot_path(ax, path, 0.99, f"{name}\n{repeated:.0%} of draws are repeats",
+              alpha=0.35)
+axes[0].legend(fontsize=9, loc="upper left")
+fig.suptitle(f"{N_SHOW_PYMC} post-warmup draws at $\\rho = 0.99$", y=1.02)
+fig.tight_layout()
+
+# %% [markdown]
+# `pm.Metropolis` barely leaves the neighbourhood it started in, and **over half
+# its draws are exact repeats** — rejected proposals, recorded again. NUTS
+# repeats a small fraction of the time and otherwise lands somewhere new, far
+# up or down the ridge rather than inching along it. In the same 300 draws it
+# covers the whole target while Metropolis covers a corner of it.
+#
+# That is what a gradient buys. NUTS follows the *shape* of the target instead of
+# guessing at it, so the ridge stops being an obstacle and becomes a direction to
+# travel in.
 
 # %%
 n_steps_mean = float(idata_nuts["sample_stats"].dataset["n_steps"].mean())
@@ -597,6 +629,9 @@ print(f"NUTS leapfrog steps per draw at rho = 0.99: {n_steps_mean:.1f}")
 print("  (Metropolis has no analogue — it takes one cheap step and rejects it.)")
 
 # %% [markdown]
+# It is not free, though: those long jumps cost **many gradient evaluations per
+# draw**, and that count climbs as the geometry worsens.
+#
 # That is the trade you want: ill-conditioning turns into a **larger bill**
 # rather than into a confident wrong number. Metropolis, on the same target,
 # stayed cheap and reported a posterior it had not actually explored.
@@ -658,13 +693,13 @@ print(f"at rho = 0.99, Gibbs ESS/draw:  "
 
 # %%
 # Same helper as the Metropolis paths above, so the two are directly comparable.
-_, path_gibbs = gibbs(0.99, n_steps=40, seed=RANDOM_SEED, record_path=True)
+_, path_gibbs = gibbs(0.99, n_steps=100, seed=RANDOM_SEED, record_path=True)
 path_mh, _ = metropolis(log_target_gaussian(0.99), start=[0.0, 0.0],
-                        n_steps=80, step_size=1.0, seed=RANDOM_SEED)
+                        n_steps=100, step_size=1.0, seed=RANDOM_SEED)
 
 fig, axes = plt.subplots(1, 2, figsize=(11, 4.8), sharex=True, sharey=True)
-plot_path(axes[0], path_mh, 0.99, r"Metropolis, 80 moves")
-plot_path(axes[1], path_gibbs, 0.99, r"Gibbs, 40 sweeps")
+plot_path(axes[0], path_mh, 0.99, r"Metropolis, 100 moves")
+plot_path(axes[1], path_gibbs, 0.99, r"Gibbs, 100 sweeps")
 axes[0].legend(fontsize=9, loc="upper left")
 fig.suptitle(r"Two samplers, the same ridge at $\rho = 0.99$", y=1.02)
 fig.tight_layout()
@@ -728,8 +763,14 @@ def fit_ddm(observed, seed=RANDOM_SEED):
         z = pm.Beta("z", 5.0, 5.0)
         t = pm.HalfNormal("t", 0.5)
         DDM("obs", v=v, a=a, z=z, t=t, observed=observed)
+        # `initvals` is load-bearing, for the reason given in the 14:30 session:
+        # PyMC would otherwise start `t` at 0.5, above the fastest RT in both of
+        # these datasets (0.351 / 0.353). Beyond that point the DDM
+        # log-likelihood is a flat constant, so a chain landing there has no
+        # gradient to follow back and never recovers.
         return pm.sample(draws=DRAWS, tune=TUNE, chains=CHAINS, cores=1,
-                         nuts_sampler="pymc", progressbar=False, random_seed=seed)
+                         nuts_sampler="pymc", progressbar=False, random_seed=seed,
+                         initvals={"t": np.array(0.1)})
 
 
 fits, posteriors, error_rates = {}, {}, {}
@@ -838,6 +879,87 @@ fig.tight_layout()
 # Left: a compact blob sitting on the truth. Right: a long thin ridge. The
 # truth is on that ridge — but so is every other point along it, and the data
 # have no way to say which.
+#
+# ### All of it at once
+#
+# `a`–`z` is the worst pair, but it is not the only one. The full pair plot
+# shows every two-parameter view **and** the marginals down the diagonal — and
+# the relationship between those two things is the point.
+
+# %%
+for label in ["balanced", "extreme"]:
+    az.plot_pair(fits[label], var_names=PARAMS, marginal=True,
+                 marginal_kind="kde")
+    fig = plt.gcf()
+    fig.set_size_inches(8.0, 8.0)
+    fig.suptitle(f"{label} design — error rate {error_rates[label]:.1%}", y=1.01)
+    fig.tight_layout()
+
+# %% [markdown]
+# > **Poll.** Look at the **diagonal** of the extreme-design plot — the marginal
+# > for each parameter on its own. `a` has a true value of 1.2, and its marginal
+# > smears from about 1 to beyond 4. Which conclusion follows?
+# >
+# > - **A.** The data contain almost no information about `a`.
+# > - **B.** The model is wrong.
+# > - **C.** The data constrain `a` well, but only *jointly* with `z`.
+# > - **D.** We need more trials.
+#
+# <details>
+# <summary>Answer</summary>
+#
+# **C.** The marginal for `a` is wide, but the joint is a thin ridge — meaning
+# the data pin down a *combination* of `a` and `z` very precisely, and say
+# almost nothing about where along that combination the truth sits.
+#
+# A marginal is what you get after **integrating out** every other parameter. On
+# a ridge, that integration sweeps along the entire ridge and returns something
+# broad — which reads as "we learned nothing about `a`", when what actually
+# happened is "we learned a great deal about `2a(1-z)` and nothing about the
+# direction orthogonal to it."
+#
+# **D is the tempting wrong answer**, and yesterday's reading settles it: more
+# trials of the *same* design shrink both parameters' marginals a little and
+# leave the ridge exactly where it is. The ridge is a property of the design,
+# not of the sample size.
+#
+# </details>
+#
+# <details class="sbi-key" open>
+# <summary>🔑 <b>Why this makes single-parameter conclusions hard</b></summary>
+#
+# Most of what gets reported from a cognitive model is **marginal**: a posterior
+# mean per parameter, a credible interval per parameter, a claim that boundary
+# separation differs between groups. All of those read one axis of this picture
+# at a time.
+#
+# On a ridge that is a bad way to read it, in both directions:
+#
+# - **You will miss real effects.** A wide marginal for `a` looks like "no
+#   evidence", so the interval comfortably includes zero difference and nothing
+#   gets reported. The information was there — it was in the joint, and
+#   marginalising threw it away.
+# - **You can manufacture false ones.** Nudge anything that moves the ridge — a
+#   slightly different prior on `z`, a different subset of trials — and `a`'s
+#   marginal slides along the ridge with it. The estimate moves a lot for reasons
+#   that have nothing to do with the effect you are testing.
+#
+# What to do about it, in rough order of preference:
+#
+# 1. **Fix the design** so the ridge does not form. Here that means an error rate
+#    that actually reaches both boundaries — the single most effective step, and
+#    the only one that adds information rather than redistributing it.
+# 2. **Report the identified combination.** If the data measure $2a(1-z)$, say
+#    so and give an interval for that, rather than an uninterpretable interval
+#    for `a`.
+# 3. **Compare models, not parameters.** Fit with and without the effect and
+#    compare them; that question is often well-posed even when the individual
+#    parameter is not.
+# 4. **Always look at the joint before reporting a marginal.** Two minutes with
+#    `az.plot_pair` is what stands between you and a confidently-worded claim
+#    about a parameter your experiment never measured.
+#
+# </details>
 #
 # ### What that costs you
 

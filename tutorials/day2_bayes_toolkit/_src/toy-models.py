@@ -42,11 +42,17 @@ warnings.filterwarnings("ignore")
 
 from ssms import Simulator
 from hssm.likelihoods import DDM        # <- the DDM as a PyMC distribution
+from hssm.likelihoods import logp_ddm   # the same likelihood, callable directly
 
 RANDOM_SEED = sum(map(ord, "sbi4cogsci-toy"))
 rng = np.random.default_rng(RANDOM_SEED)
 
-DRAWS, TUNE, CHAINS = 800, 800, 2
+# Four chains, run in parallel. `r_hat` compares variance *between* chains to
+# variance *within* them, so two chains make it a weak test — ArviZ warns about
+# exactly this. Four chains on four cores also finishes sooner than two chains
+# run one after another, so this is cheaper as well as better.
+DRAWS, TUNE, CHAINS = 800, 800, 4
+CORES = 4
 
 print("pymc", pm.__version__, "| arviz", az.__version__)
 
@@ -73,12 +79,15 @@ _A_BY_EMPHASIS = {"speed": 0.9, "accuracy": 1.6}
 _Z_TRUE, _T_TRUE = 0.5, 0.30
 
 rows = []
-for coh in CONDITIONS:
-    for emp in EMPHASES:
+for i, coh in enumerate(CONDITIONS):
+    for j, emp in enumerate(EMPHASES):
         theta = [_V_BY_COHERENCE[coh], _A_BY_EMPHASIS[emp], _Z_TRUE, _T_TRUE]
+        # Seed from the cell's *position*, not `hash((coh, emp))`: Python salts
+        # string hashes per process (PYTHONHASHSEED), so a hash-derived seed
+        # silently draws a different dataset on every run.
         out = Simulator(model="ddm").simulate(
             theta=theta, n_samples=N_PER_CELL,
-            random_state=RANDOM_SEED + hash((coh, emp)) % 1000)
+            random_state=RANDOM_SEED + 10 * i + j)
         rows.append(pd.DataFrame({
             "rt": out["rts"].flatten(),
             "response": out["choices"].flatten().astype(int),
@@ -181,11 +190,23 @@ emp_idx = data["emphasis"].cat.codes.to_numpy()
 COORDS = {"coherence": CONDITIONS, "emphasis": EMPHASES}
 PARAMS = ["v", "a", "z", "t"]
 
+# Where to start `t`. See "A trap worth knowing about" below for why this is
+# not optional: PyMC's default starting value for this prior lands *above* the
+# fastest response time in the dataset, where the likelihood is undefined.
+T_INIT = 0.1
+
 
 def fit(model, seed=RANDOM_SEED):
     with model:
-        return pm.sample(draws=DRAWS, tune=TUNE, chains=CHAINS, cores=1,
+        # `initvals` starts `t` somewhere the likelihood is actually defined —
+        # see "A trap worth knowing about" below. Note it goes here, on
+        # `sample`, and *not* as `initval=` on the distribution: the latter
+        # marks the model as having non-default initial values, which makes
+        # `log_likelihood=True` (and therefore `az.loo` in section 4) fail with
+        # "Cannot convert models with non-default initial_values".
+        return pm.sample(draws=DRAWS, tune=TUNE, chains=CHAINS, cores=CORES,
                          nuts_sampler="pymc", progressbar=False, random_seed=seed,
+                         initvals={"t": np.array(T_INIT)},
                          idata_kwargs={"log_likelihood": True})
 
 
@@ -199,14 +220,20 @@ with pm.Model(coords=COORDS) as m1_flat:
     DDM("obs", v=v, a=a, z=z, t=t, observed=observed)
 
 idata_flat = fit(m1_flat)
-print(az.summary(idata_flat, var_names=PARAMS, kind="stats").to_string())
+print(az.summary(idata_flat, var_names=PARAMS, kind="all").to_string())
 
 # %% [markdown]
 # ### Always look at the chains, not just the summary
 #
-# A summary table cannot tell you whether the numbers in it mean anything. Two
-# plots settle that, and we will run **the same two after every fit** in this
-# notebook so they can be compared at a glance:
+# `kind="all"` is deliberate: it prints `r_hat` and `ess_bulk` next to the
+# estimates. Read those two **first**. `r_hat` compares the variance between
+# chains to the variance within them, so anything above about `1.01` says the
+# chains disagree and the mean beside it is not a posterior mean of anything.
+# `ess_bulk` is how many independent draws your correlated ones are worth.
+#
+# But both collapse a whole distribution into one number, and neither shows you
+# its *shape*. Two plots do, and we will run **the same two after every fit** in
+# this notebook so they can be compared at a glance:
 #
 # 1. **Marginals and traces.** The trace should look like a fuzzy caterpillar
 #    with no trend and no long flat stretches, and the chains should sit on top
@@ -228,6 +255,66 @@ S.posterior_diagnostics(idata_flat, PARAMS, title="Model 1: flat")
 # distribution to the right, so the data constrains their *combination* better
 # than either alone. That is the mild version of what Session 4 turns into a
 # real failure.
+
+# %% [markdown]
+# ### A trap worth knowing about: where the likelihood goes flat
+#
+# `t` is non-decision time — the part of the response that was never about
+# deciding. So `t` **cannot exceed the response time it is part of**. What does
+# the likelihood do if you ask it anyway?
+#
+# It does not raise, and it does not return `-inf`. It returns a constant:
+
+# %%
+_probe = np.array([[0.5, 1.0]])                      # one trial, rt = 0.5 s
+for _t in [0.10, 0.30, 0.49, 0.51, 0.70, 3.00]:
+    # `logp_ddm` builds a *symbolic* pytensor expression rather than a number;
+    # `.eval()` is what actually computes it.
+    _lp = logp_ddm(_probe, v=1.0, a=1.2, z=0.5, t=_t).eval()  # ty: ignore[unresolved-attribute]
+    print(f"t = {_t:4.2f}   log p = {float(np.ravel(_lp)[0]):9.3f}"
+          + ("   <- impossible: t > rt" if _t > 0.5 else ""))
+
+# %% [markdown]
+# Past `rt` the log-likelihood pins to `-66.1` and **stays there**. That region
+# is perfectly flat, and flat means *no gradient*. NUTS navigates by gradient,
+# so a chain that starts out there has nothing telling it which way is back. It
+# does not crash or warn — it wanders on the plateau for the entire run, and
+# because every trajectory runs to maximum tree depth, it is also very slow.
+#
+# This is not hypothetical. Our fastest trial is:
+
+# %%
+# Ask the model where it *would* have started, rather than deriving it: PyMC
+# picks a "support point" per distribution, and guessing which formula it uses
+# is a good way to be confidently wrong.
+_default_t = float(np.exp(m1_flat.initial_point()["t_log__"]))
+print(f"fastest RT in the dataset : {data['rt'].min():.3f} s")
+print(f"PyMC's default start for t: {_default_t:.3f} s   <- already past it")
+
+# %% [markdown]
+# The default start sits **above the fastest RT**, i.e. inside the flat region.
+# Only the random jitter PyMC adds at initialisation rescues the chains that
+# happen to get pushed downward; the rest strand there for the whole run. That
+# is why `fit()` passes `initvals={"t": T_INIT}`.
+#
+# Note *where* that goes: on `pm.sample`, not as `initval=` on the distribution.
+# They look interchangeable and are not — `initval=` marks the model as having
+# non-default initial values, and PyMC then refuses to compute a pointwise
+# log-likelihood for it, which breaks the `az.loo` comparison in section 4.
+#
+# The general lesson is the one this whole section is about. **A stranded chain
+# produces a summary table that looks like a result.** You would catch it in
+# `r_hat`, and you would *see* it immediately in the pair plot — as a second
+# blob of draws, sitting somewhere no parameter value should be.
+#
+# > **Poll.** A colleague's DDM fit returns `t = 0.62` with a wide interval, on
+# > data whose fastest response is 0.45 s. What is the single most likely
+# > explanation?
+# >
+# > - The participant was genuinely slow to encode the stimulus
+# > - Not enough draws — it needs a longer run
+# > - A chain is stuck where the likelihood is flat
+# > - The boundary `a` is too wide
 
 # %% [markdown]
 # It sampled, it converged, and the numbers look perfectly reasonable. That is
@@ -321,12 +408,16 @@ with pm.Model(coords=COORDS) as m2_drift:
     DDM("obs", v=v[coh_idx], a=a, z=z, t=t, observed=observed)
 
 idata_drift = fit(m2_drift)
-pred_drift = cell_predictions(idata_drift, m2_drift)
-compare_plot(pred_drift, "Model 2: drift by coherence")
 
 # %%
-print(az.summary(idata_drift, var_names=PARAMS, kind="stats").to_string())
+# Check the fit *before* looking at what it predicts: predictions drawn from a
+# sampler that never converged are not predictions of anything.
+print(az.summary(idata_drift, var_names=PARAMS, kind="all").to_string())
 S.posterior_diagnostics(idata_drift, PARAMS, title="Model 2")
+
+# %%
+pred_drift = cell_predictions(idata_drift, m2_drift)
+compare_plot(pred_drift, "Model 2: drift by coherence")
 
 # %%
 # Model 3: drift varies by coherence AND boundary varies by emphasis.
@@ -340,12 +431,14 @@ with pm.Model(coords=COORDS) as m3_both:
     DDM("obs", v=v[coh_idx], a=a[emp_idx], z=z, t=t, observed=observed)
 
 idata_both = fit(m3_both)
-pred_both = cell_predictions(idata_both, m3_both)
-compare_plot(pred_both, "Model 3: drift by coherence, boundary by emphasis")
 
 # %%
-print(az.summary(idata_both, var_names=PARAMS, kind="stats").to_string())
+print(az.summary(idata_both, var_names=PARAMS, kind="all").to_string())
 S.posterior_diagnostics(idata_both, PARAMS, title="Model 3")
+
+# %%
+pred_both = cell_predictions(idata_both, m3_both)
+compare_plot(pred_both, "Model 3: drift by coherence, boundary by emphasis")
 
 # %% [markdown]
 # Model 2 captures the accuracy pattern and still misses the RT pattern —

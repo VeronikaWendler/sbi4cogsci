@@ -107,7 +107,7 @@ print("pymc", pm.__version__, "| arviz", az.__version__, "| bambi", bmb.__versio
 # <summary>💡 <b>The one sentence to keep</b></summary>
 #
 # You describe the *generative story*; the library turns it into a
-# differentiable graph and samples the posterior for you.
+# differentiable (if feasible, non-differentiable is allowed) graph and samples the posterior for you.
 #
 # </details>
 
@@ -128,17 +128,12 @@ print("pymc", pm.__version__, "| arviz", az.__version__, "| bambi", bmb.__versio
 #
 # </details>
 
-# %%
-print("az.plot_posterior exists?", hasattr(az, "plot_posterior"))
-print("az.waic exists?          ", hasattr(az, "waic"))
-print("use instead: az.plot_dist, az.plot_ppc_dist, az.plot_trace_dist, az.loo")
-
 # %% [markdown]
 # ## 1. What is a PyMC distribution?
 # ### Standalone
 #
-# This is the piece most tutorials skip, and it is the source of most early
-# confusion. A PyMC distribution is used in **two different ways**, and they
+# This is the piece most tutorials skip, and it is the source of a lot of early
+# confusion. A PyMC distribution can be instantiated in primarily **two different ways**, and they
 # behave differently.
 
 # %%
@@ -146,11 +141,6 @@ print("use instead: az.plot_dist, az.plot_ppc_dist, az.plot_trace_dist, az.loo")
 standalone = pm.Normal.dist(mu=0.0, sigma=1.0)
 print("type:", type(standalone).__name__)
 print("5 draws:", pm.draw(standalone, draws=5, random_seed=RANDOM_SEED).round(3))
-
-# You can also evaluate the log-likelihood (logp) at specific values:
-values = np.array([0.0, 1.0, -1.0])
-logps = pm.logp(standalone, values).eval()
-print("logp at [0.0, 1.0, -1.0]:", np.round(logps, 3))
 
 # %% [markdown]
 # `pm.Normal.dist(...)` gives you a standalone *distribution* object. It doesn't belong to any model. Use it whenever you want a distribution 
@@ -168,7 +158,7 @@ print("logp at [0.0, 1.0, -1.0]:", np.round(logps, 3))
 
 # %%
 grid = np.linspace(-4, 4, 9)
-logp = pm.logp(pm.Normal.dist(0.0, 1.0), grid).eval()
+logp = pm.logp(standalone, grid).eval()
 
 fig, ax = plt.subplots(figsize=(6.5, 3.2))
 xs = np.linspace(-4, 4, 300)
@@ -178,9 +168,6 @@ ax.plot(grid, np.exp(logp), "o", color=S.PRIMARY, ms=6, ls="none")
 ax.set(title="pm.logp evaluated on a grid", xlabel="$x$", ylabel="density")
 ax.legend()
 fig.tight_layout()
-
-print("logp at 0:", float(pm.logp(pm.Normal.dist(0.0, 1.0), 0.0).eval()).__round__(4),
-      " (= -0.5*log(2*pi) =", round(float(-0.5 * np.log(2 * np.pi)), 4), ")")
 
 # %% [markdown]
 # Now the second way:
@@ -194,6 +181,9 @@ with pm.Model() as demo:
 
 print("type:", type(mu).__name__)
 print("model variables:", [v.name for v in demo.basic_RVs])
+
+# (b.1) Can now call it from the outside as well
+print(pm.draw(demo.mu, draws = 10))
 
 # %% [markdown]
 # Inside a `with pm.Model()` block, the same call **registers a node in a
@@ -247,10 +237,14 @@ TRUE_MU, TRUE_SIGMA, N = 2.5, 1.5, 60
 y_obs = rng.normal(TRUE_MU, TRUE_SIGMA, N)
 
 with pm.Model() as first_model:
-    mu = pm.Normal("mu", mu=0.0, sigma=10.0)      # prior
-    sigma = pm.HalfNormal("sigma", sigma=5.0)     # prior
-    pm.Normal("y", mu=mu, sigma=sigma, observed=y_obs)   # likelihood
+    # Priors
+    mu = pm.Normal("mu", mu=0.0, sigma=10.0)
+    sigma = pm.HalfNormal("sigma", sigma=5.0)
 
+    # Likelihood
+    pm.Normal("y", mu=mu, sigma=sigma, observed=y_obs)
+
+    # Posterior samples
     idata = pm.sample(draws=1000, tune=1000, chains=4, cores=1,
                       nuts_sampler="pymc", progressbar=False,
                       random_seed=RANDOM_SEED)
@@ -314,7 +308,7 @@ idata["posterior"].dataset
 # ### Data Structures that can cause confusion
 #
 # `idata.posterior` is a **DataTree node**, not a `Dataset`. Most `xarray`
-# operations you want live on the `Dataset`, so reach through `.dataset`:
+# operations you want live on the `Dataset`, so reach through via `.dataset`:
 
 # %%
 print("idata.posterior       ->", type(idata.posterior).__name__)
@@ -347,7 +341,7 @@ print("chain 2, last 5 draws of mu:",
 
 # %%
 # 3. PER-CHAIN MEANS
-print("\nmean of mu within each chain:")
+print("mean of mu within each chain:")
 print(post["mu"].mean(dim="draw").to_series().round(3).to_string())
 
 # %%
@@ -398,10 +392,16 @@ y_grp = rng.normal([1.0, 2.0, 3.0], 1.0, size=(40, 3))
 with pm.Model() as m_shape:
     mu_s = pm.Normal("mu", 0.0, 5.0, shape=3)
     pm.Normal("y", mu=mu_s, sigma=1.0, observed=y_grp)
-    idata_shape = pm.sample(300, tune=300, chains=2, cores=1, nuts_sampler="pymc",
-                            progressbar=False, random_seed=RANDOM_SEED)
+    idata_shape = pm.sample(300,
+                            tune=300, 
+                            chains=2,
+                            cores=1,
+                            nuts_sampler="pymc",
+                            progressbar=False,
+                            random_seed=RANDOM_SEED
+                            )
 
-print("dimension names:", list(idata_shape.posterior.dataset["mu"].dims))
+print("\n \n dimension names:", list(idata_shape.posterior.dataset["mu"].dims))
 print(az.summary(idata_shape, kind="stats").to_string())
 
 # %%
@@ -411,10 +411,16 @@ COORDS = {"condition": ["low", "med", "high"]}
 with pm.Model(coords=COORDS) as m_dims:
     mu_d = pm.Normal("mu", 0.0, 5.0, dims="condition")
     pm.Normal("y", mu=mu_d, sigma=1.0, observed=y_grp)
-    idata_dims = pm.sample(300, tune=300, chains=2, cores=1, nuts_sampler="pymc",
-                           progressbar=False, random_seed=RANDOM_SEED)
+    idata_dims = pm.sample(300,
+                           tune=300,
+                           chains=2,
+                           cores=1,
+                           nuts_sampler="pymc",
+                           progressbar=False,
+                           random_seed=RANDOM_SEED
+                           )
 
-print("dimension names:", list(idata_dims.posterior.dataset["mu"].dims))
+print("\n \ndimension names:", list(idata_dims.posterior.dataset["mu"].dims))
 print(az.summary(idata_dims, kind="stats").to_string())
 
 # %% [markdown]
@@ -1147,14 +1153,7 @@ fig.tight_layout()
 # are not a warrant for trusting an extrapolation.
 
 # %% [markdown]
-# ### When to use which
-#
-# | | write it in PyMC | write it in bambi |
-# |---|---|---|
-# | standard GLM / mixed model | works, verbose | one line |
-# | custom likelihood (e.g. a DDM) | the only option | no |
-# | non-standard structure | the only option | no |
-# | you want explicit control of every prior | yes | possible, but you are fighting it |
+# ### Transfer Learning
 #
 # bambi is a front end, not a different engine. Everything you learn about PyMC
 # sampling, diagnostics and `DataTree` applies unchanged — which is why we did
@@ -1166,7 +1165,7 @@ fig.tight_layout()
 # Add a grouping variable to the simulated data (say 5 groups with different
 # intercepts), then write the bambi formula for a model with a **random
 # intercept per group**. Fit it and check that the group-level parameters
-# appear in the posterior.
+# appear in the posterior. (Note the Wilkinson notation for the random intercept: "({effect} | {grouping_variable})")
 #
 # <details>
 # <summary>Solution</summary>

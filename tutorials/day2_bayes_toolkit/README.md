@@ -34,7 +34,7 @@ No GPU needed. No data is downloaded — everything is simulated in-notebook.
 |---|---|
 | `pymc-intro.ipynb` | ~15 s |
 | `simulating-cognitive-models.ipynb` | ~10 s |
-| `toy-models.ipynb` | **a few minutes** — fits three DDMs and their posterior predictives |
+| `toy-models.ipynb` | **~5 min** — fits three DDMs (4 chains each) and their posterior predictives |
 | `mcmc-and-identifiability.ipynb` | **a few minutes** — fits two DDMs, one on a hard posterior |
 
 The last two are slow deliberately: they fit the DDM repeatedly. If you are
