@@ -1,0 +1,7 @@
+# The Python code in this repo lives under tutorials/ and runs in the shared
+# environment built by `cd tutorials && uv sync`. Without this, ty resolves
+# imports against whatever interpreter it finds first and reports every
+# third-party import (numpy, matplotlib, ssms, pymc, ...) as unresolved.
+[environment]
+python = "./tutorials/.venv"
+extra-paths = ["./tutorials"]

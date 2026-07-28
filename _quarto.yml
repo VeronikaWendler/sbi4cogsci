@@ -1,6 +1,23 @@
 project:
   type: website
   output-dir: _site
+  # Data files that interactive (OJS) figures fetch at view time. Quarto
+  # discovers resources referenced via FileAttachment automatically, but the
+  # notebook pages use a plain fetch() instead — FileAttachment is broken
+  # inside .ipynb here — so these have to be declared.
+  resources:
+    - "tutorials/**/*.json"
+  # Positive globs only. Anything not matched (READMEs, CONTRIBUTING.md) stays
+  # repo-only. Quarto also skips any path segment starting with "_" — files as
+  # well as dirs — regardless of these globs; that is how solution and draft
+  # notebooks (`_*.ipynb`) are kept off the site. Prefer the `_` prefix over
+  # "!" negations here: negations work on Quarto 1.10 but silently stopped
+  # short on 1.9, and CI installs an unpinned version.
+  render:
+    - "*.qmd"                       # top-level site pages
+    - "tutorials/index.qmd"         # tutorials catalog
+    - "tutorials/*/*.ipynb"         # tutorial site pages (baked notebooks…)
+    - "tutorials/*/*.qmd"           # …or display-only qmd pages
 
 website:
   title: "SBI-4-CogSci"
@@ -17,6 +34,8 @@ website:
         text: Overview
       - href: schedule.qmd
         text: Schedule
+      - href: tutorials/index.qmd
+        text: Tutorials
       - href: organizers.qmd
         text: Organizers
       - href: application.qmd
@@ -29,12 +48,27 @@ website:
         <div class="footer-title">SBI4CogSci Summer School 2026</div>
         <div class="footer-meta">July 27-31, 2026</div>
       </div>
+    # The icon is applied as a CSS background in styles.css rather than an
+    # <img> or markdown image here. Quarto does not rewrite relative paths in
+    # page-footer content for each page's depth, so "images/..." 404s on every
+    # page below the root. CSS url() resolves relative to the STYLESHEET, which
+    # sits at the site root — correct at any depth, and still correct when the
+    # site is served from the /sbi4cogsci/ project subpath (a leading slash
+    # would fix preview and break production).
     center: |
-      <img src="images/graphics/sbi4cogsci-icon.png" height="80" alt="SBI4CogSci icon" />
+      <div class="footer-icon" role="img" aria-label="SBI4CogSci icon"></div>
     right: |
       <div class="footer-funder">
         Supported by the <br><strong>William K. and Katherine W. Estes Fund</strong>
       </div>
+
+# NOTE on math: we stay on Quarto's default MathJax, which is vendored locally,
+# and we avoid `\mathcal{...}`. MathJax's HTML output asks the browser for a
+# calligraphic font that is not present here, so `\mathcal{N}` rendered as a
+# tofu box. Switching to KaTeX fixes the glyph but pulls katex@latest from a CDN
+# — an unpinned external dependency that also breaks presenting offline. Writing
+# `\text{Normal}(...)` instead costs nothing, always renders, and is clearer for
+# an audience with mixed maths backgrounds.
 
 format:
   html:

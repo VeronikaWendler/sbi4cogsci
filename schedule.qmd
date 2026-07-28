@@ -51,11 +51,11 @@ title: "Schedule"
 - 10:00 **Traditional and amortized Bayesian computation** (Radev) — Reading: Bürkner et al. (2023)
 - 10:45 Morning coffee / tea
 - 11:00 Breakout group meetings
-- 12:00 **A tutorial on PyMC** (Fengler) — Reading: Abril-Pla et al. (2023)
+- 12:00 **A tutorial on PyMC** (Fengler) — Reading: Abril-Pla et al. (2023) · [materials](tutorials/day2_bayes_toolkit/pymc-intro.ipynb)
 - 13:00 Lunch
-- 14:00 Hands-on: **simulating data from a cognitive model** (Fengler)
-- 14:30 Hands-on: toy models for parameter estimation
-- 15:00 — MCMC methods (Fengler) — Reading: van Ravenzwaaij et al. (2018)
+- 14:00 Hands-on: **simulating data from a cognitive model** (Fengler) — [materials](tutorials/day2_bayes_toolkit/simulating-cognitive-models.ipynb) · [DDM explorer](tutorials/day2_bayes_toolkit/ddm-explorer.qmd)
+- 14:30 Hands-on: **toy models for parameter estimation** (Fengler) — [materials](tutorials/day2_bayes_toolkit/toy-models.ipynb)
+- 15:00 — MCMC methods (Fengler) — Reading: van Ravenzwaaij et al. (2018) · [materials](tutorials/day2_bayes_toolkit/mcmc-and-identifiability.ipynb)
 - 15:30 — Neural network methods (Sokratous) — Reading: Sokratous et al. (2023)
 - 16:00 Short breakout meetings: identifying applications · Q&A
 
@@ -70,11 +70,11 @@ title: "Schedule"
 ## Day 3 — Wednesday, July 29: Tools for SBI
 
 - 09:00 **MATLAB Deep Learning Toolbox** (Kvam) — Reading: Kvam et al. (2025)
-- 09:30 **HSSM** (Fengler) — Reading: Xu et al. (2025)
-- 10:00 **BayesFlow** (Radev) — Reading: Radev et al. (2020)
+- 09:30 **HSSM** (Fengler) — Reading: Xu et al. (2025) · [materials](tutorials/day3_sbi_tools/hssm-intro.ipynb)
+- 10:00 **BayesFlow** (Radev) — Reading: Radev et al. (2020) · [materials](tutorials/day3_sbi_tools/dmc-bayesflow.ipynb)
 - 10:45 Morning coffee / tea
-- 11:00 **MCMC sampling for hierarchical Bayesian models** (Turner, Fengler) — Reading: Fengler et al. (2021)
-- 12:00 **Recurrent networks for dynamic data** (Pan) — Reading: Pan et al. (2025)
+- 11:00 **MCMC sampling for hierarchical Bayesian models** (Turner, Fengler) — Reading: Fengler et al. (2021) · [slides](tutorials/day3_sbi_tools/hierarchical-mcmc-slides.qmd) · [materials](tutorials/day3_sbi_tools/hierarchical-mcmc.ipynb)
+- 12:00 **Recurrent networks for dynamic data** (Pan) — Reading: Pan et al. (2025) · [materials](tutorials/day3_sbi_tools/lasenet_tutorial.ipynb)
 - 13:00 Lunch
 - 14:00 **Variational autoencoders** (Sokratous) — Reading: Doersch (2016)
 - 15:00 **Participant poster session** (to 17:00)
@@ -98,7 +98,7 @@ title: "Schedule"
 - 10:45 **Exploratory modeling with moderational learning** (Zhao) — Reading: Zhao et al. (2025)
 - 12:00 **Advanced modeling with diffusion methods** (Radev) — Reading: Arruda et al. (2025)
 - 13:00 Lunch
-- 14:00 Joint modeling workshop: **using a deep neural network to build in covariation** (Nunez) — Reading: Ghaderi-Kangavari et al. (2023)
+- 14:00 Joint modeling workshop: **using a deep neural network to build in covariation** (Nunez) — Reading: Ghaderi-Kangavari et al. (2023) · [materials](tutorials/day4_complex_joint/demo_single_trial_integrative_joint_modeling.ipynb)
 - 14:45 Breakout group meetings
 - 16:00 Panel discussion with organizers + keynote speakers: future of SBI, open problems, career advice
 

@@ -70,6 +70,41 @@ uv python install 3.12
 uv sync --python 3.12
 ```
 
+## 3b. Optional: multi-threaded `ssm-simulators`
+
+Skip this unless you are generating training data at scale — nothing in the
+tutorials needs it.
+
+The `ssm-simulators` wheels on PyPI are compiled **without** OpenMP, so the
+`n_threads` argument to `simulate()` is accepted and silently ignored. Check
+what you have:
+
+```bash
+uv run python -c "from cssm import _openmp_status; _openmp_status.print_status()"
+```
+
+If it says `OpenMP compiled: No` and you want threading, rebuild that one
+package from source against a local OpenMP. On macOS:
+
+```bash
+brew install libomp
+export LIBOMP=$(brew --prefix libomp)
+export CFLAGS="-Xpreprocessor -fopenmp -I$LIBOMP/include"
+export LDFLAGS="-L$LIBOMP/lib -lomp"
+uv pip install --no-binary ssm-simulators --reinstall-package ssm-simulators \
+    "ssm-simulators==0.13.2"
+```
+
+On Linux, `libgomp` ships with gcc and `export CFLAGS="-fopenmp"` is enough.
+
+Two things to know. **A later `uv sync` reinstalls the wheel and silently undoes
+this** — re-run the command if `n_threads` stops helping. And threading only
+pays for the right shape of workload: measured on an 18-core machine, a sweep of
+2,000 parameter sets x 200 samples runs ~6x faster on 8 threads, while 100,000
+trials x 1 sample each runs *slower* than single-threaded, because each thread
+gets too little work to be worth the coordination. `simulating-cognitive-models.ipynb`
+measures both.
+
 ## 4. Run Python inside the uv environment
 
 Use `uv run` whenever you want to run Python with these packages available:

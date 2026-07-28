@@ -1,7 +1,7 @@
 [project]
 name = "bayesflow-hssm-tutorial"
 version = "0.1.0"
-description = "Minimal uv environment for BayesFlow, HSSM, JAX, and notebook tutorials."
+description = "Shared uv environment for the BayesFlow / HSSM / PyMC tutorials."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
@@ -10,4 +10,15 @@ dependencies = [
     "jax",
     "ipykernel",
     "ipywidgets",
+    # Declared explicitly rather than relied on transitively via hssm: these are
+    # imported directly by the Day 2/3 tutorials, and the ArviZ 1.x lower bound
+    # is load-bearing (1.0 removed plot_posterior/plot_ppc/waic and changed the
+    # default interval from 94% HDI to 89% ETI).
+    "pymc>=6.2",
+    "arviz>=1.2",
+    "bambi>=0.19",
+    "ssm-simulators>=0.13.2",
+    "pymc-extras>=0.11",
+    "matplotlib",
+    "pandas",
 ]

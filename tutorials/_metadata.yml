@@ -1,0 +1,6 @@
+# Applies to every page under tutorials/. The Pages CI runner has no
+# Python/R/MATLAB: NOTHING here may execute at render time. Notebooks render
+# from stored outputs; .qmd code cells render as static code.
+# Do not override with `execute: enabled: true` in any file.
+execute:
+  enabled: false
