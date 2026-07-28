@@ -301,7 +301,7 @@ _ = S.posterior_diagnostics(idata_flat, PARAMS, title="Model 1: flat")
 # real failure.
 
 # %% [markdown]
-# ### A trap worth knowing about: where the likelihood goes flat
+# ### A trap worth knowing about
 #
 # `t` is non-decision time — the part of the response that was never about
 # deciding. So `t` **cannot exceed the response time it is part of**. What does
@@ -341,15 +341,6 @@ print(f"PyMC's default start for t: {_default_t:.3f} s   <- already past it")
 # happen to get pushed downward; the rest strand there for the whole run. That
 # is why `fit()` passes `initvals={"t": T_INIT}`.
 #
-# Note *where* that goes: on `pm.sample`, not as `initval=` on the distribution.
-# They look interchangeable and are not — `initval=` marks the model as having
-# non-default initial values, and PyMC then refuses to compute a pointwise
-# log-likelihood for it, which breaks the `az.loo` comparison in section 4.
-#
-# The general lesson is the one this whole section is about. **A stranded chain
-# produces a summary table that looks like a result.** You would catch it in
-# `r_hat`, and you would *see* it immediately in the pair plot — as a second
-# blob of draws, sitting somewhere no parameter value should be.
 #
 
 # %% [markdown]
@@ -635,7 +626,8 @@ _ = az.plot_compare(comparison)
 # %% [markdown]
 # ## 5. What actually generated the data
 #
-# Time to look behind the curtain.
+# Since we were dealing with synthetic data here, we can actually look at exactly
+# what the original data generating process was..
 
 # %%
 print("TRUE generating parameters")

@@ -795,50 +795,12 @@ fig.suptitle("Every parameter pair, both designs", y=1.02)
 # separation against start point — and the *weakest* is `v` with `a`. That is
 # worth pausing on, because `v`–`a` is the pair people reach for first.
 #
-# ### Why `a` and `z` collapse together
+# ### For the extreme data `a` and `z` collapse together
 #
 # With essentially no errors, every single trial ended at the **same** boundary.
 # So ask what the data can possibly measure. The process starts at $z\,a$ and
 # has to travel
 #
-# $$
-# \underbrace{a\,(1 - z)}_{\text{to the boundary it reaches}}
-# \qquad\text{versus}\qquad
-# \underbrace{a\,z}_{\text{to the boundary nobody ever reaches}} .
-# $$
-#
-# Only the first of those leaves a trace in the data. And *that* distance is a
-# single number built from two parameters — so `a` and `z` are free to slide
-# together as long as their combination holds still.
-
-# %%
-def rel_width(x):
-    """sd relative to the mean — comparable across parameters on different scales."""
-    return x.std() / abs(x.mean())
-
-
-print(f"{'quantity':30s} {'balanced':>10s} {'extreme':>10s}")
-for name, f in [
-    ("a  (boundary)", lambda d: d["a"]),
-    ("z  (start point)", lambda d: d["z"]),
-    ("a*(1-z)  distance travelled", lambda d: d["a"] * (1 - d["z"])),
-    ("a*z      distance NOT travelled", lambda d: d["a"] * d["z"]),
-]:
-    print(f"{name:30s} {rel_width(f(posteriors['balanced'])):10.3f} "
-          f"{rel_width(f(posteriors['extreme'])):10.3f}")
-
-# %% [markdown]
-# There is the whole story in four rows. Read the `extreme` column top to
-# bottom: `a` on its own is badly determined, `z` on its own is poor, but the
-# distance the process actually **travelled** is the best-determined of the
-# three — and the distance to the boundary nobody ever reached is the worst of
-# the lot by a clear margin.
-#
-# The data measured what happened. It could not measure what never happened.
-#
-# This is also why `v`–`a` looks so weak: `a` on its own is not the
-# quantity the experiment sees. Combine it with `z` first, and the trade-off
-# reappears.
 
 # %%
 fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.4))
