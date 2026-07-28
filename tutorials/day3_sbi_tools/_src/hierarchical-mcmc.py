@@ -39,20 +39,34 @@
 
 # %%
 # --- Google Colab bootstrap; does nothing anywhere else ---------------------
-import importlib.util, subprocess, sys, urllib.request
+import importlib.util, subprocess, sys, urllib.error, urllib.request
 
 IN_COLAB = importlib.util.find_spec("google.colab") is not None
 
+# `main` once this is merged; the branch is the fallback so the Colab path can
+# be tested BEFORE the merge, when main does not yet have these files.
+_REFS = ("main", "afengler.tutorials")
+_RAW = "https://raw.githubusercontent.com/stefanradev93/sbi4cogsci/{ref}/tutorials/"
+
+
+def _fetch(module):
+    for ref in _REFS:
+        try:
+            urllib.request.urlretrieve(_RAW.format(ref=ref) + module, module)
+            return ref
+        except urllib.error.HTTPError:
+            continue
+    raise RuntimeError(f"could not fetch {module} from any of {_REFS}")
+
+
 if IN_COLAB:
-    _RAW = ("https://raw.githubusercontent.com/stefanradev93/sbi4cogsci/"
-            "main/tutorials/")
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pymc>=6.2", "arviz>=1.2", "hssm>=0.4", "pymc-extras>=0.11"],
                    check=True)
     # `dot` is a system binary, not a Python package.
     subprocess.run(["apt-get", "-qq", "install", "-y", "graphviz"],
                    check=True)
     for _mod in ["sbi4cogsci_style.py", "sbi4cogsci_figures.py"]:
-        urllib.request.urlretrieve(_RAW + _mod, _mod)
+        print(f"  fetched {_mod} from {_fetch(_mod)}")
     print("Colab setup done.")
 
 # %%
