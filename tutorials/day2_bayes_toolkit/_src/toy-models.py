@@ -191,19 +191,14 @@ COORDS = {"coherence": CONDITIONS, "emphasis": EMPHASES}
 PARAMS = ["v", "a", "z", "t"]
 
 # Where to start `t`. See "A trap worth knowing about" below for why this is
-# not optional: PyMC's default starting value for this prior lands *above* the
-# fastest response time in the dataset, where the likelihood is undefined.
+# not optional.
 T_INIT = 0.1
 
 
 def fit(model, seed=RANDOM_SEED):
     with model:
         # `initvals` starts `t` somewhere the likelihood is actually defined —
-        # see "A trap worth knowing about" below. Note it goes here, on
-        # `sample`, and *not* as `initval=` on the distribution: the latter
-        # marks the model as having non-default initial values, which makes
-        # `log_likelihood=True` (and therefore `az.loo` in section 4) fail with
-        # "Cannot convert models with non-default initial_values".
+        # see "A trap worth knowing about" below."
         return pm.sample(draws=DRAWS, tune=TUNE, chains=CHAINS, cores=CORES,
                          nuts_sampler="pymc", progressbar=False, random_seed=seed,
                          initvals={"t": np.array(T_INIT)},
@@ -244,7 +239,7 @@ print(az.summary(idata_flat, var_names=PARAMS, kind="all").to_string())
 #    rather than scattering, that region is what your sampler could not handle.
 
 # %%
-S.posterior_diagnostics(idata_flat, PARAMS, title="Model 1: flat")
+_ = S.posterior_diagnostics(idata_flat, PARAMS, title="Model 1: flat")
 
 # %% [markdown]
 # Clean caterpillars, overlapping chains, no red. The sampler did its job — the
@@ -307,14 +302,6 @@ print(f"PyMC's default start for t: {_default_t:.3f} s   <- already past it")
 # `r_hat`, and you would *see* it immediately in the pair plot — as a second
 # blob of draws, sitting somewhere no parameter value should be.
 #
-# > **Poll.** A colleague's DDM fit returns `t = 0.62` with a wide interval, on
-# > data whose fastest response is 0.45 s. What is the single most likely
-# > explanation?
-# >
-# > - The participant was genuinely slow to encode the stimulus
-# > - Not enough draws — it needs a longer run
-# > - A chain is stuck where the likelihood is flat
-# > - The boundary `a` is too wide
 
 # %% [markdown]
 # It sampled, it converged, and the numbers look perfectly reasonable. That is
@@ -413,7 +400,7 @@ idata_drift = fit(m2_drift)
 # Check the fit *before* looking at what it predicts: predictions drawn from a
 # sampler that never converged are not predictions of anything.
 print(az.summary(idata_drift, var_names=PARAMS, kind="all").to_string())
-S.posterior_diagnostics(idata_drift, PARAMS, title="Model 2")
+_ = S.posterior_diagnostics(idata_drift, PARAMS, title="Model 2")
 
 # %%
 pred_drift = cell_predictions(idata_drift, m2_drift)
@@ -434,7 +421,7 @@ idata_both = fit(m3_both)
 
 # %%
 print(az.summary(idata_both, var_names=PARAMS, kind="all").to_string())
-S.posterior_diagnostics(idata_both, PARAMS, title="Model 3")
+_ = S.posterior_diagnostics(idata_both, PARAMS, title="Model 3")
 
 # %%
 pred_both = cell_predictions(idata_both, m3_both)
@@ -490,7 +477,9 @@ for name, idata in [("1: flat", idata_flat),
         print(f"{name:24s} elpd_loo = {float(loo.elpd):9.1f}   "
               f"p_loo = {float(loo.p):6.1f}   Pareto k > 0.7: {bad:3d}/{k.size}")
     except Exception as exc:
-        # Not defensive programming for its own sake — see the callout below.
+        # `az.loo` can raise outright on a badly misspecified model. Catching it
+        # per model means one casualty does not hide the rows that did work —
+        # which is not true of `az.compare` below.
         print(f"{name:24s} LOO FAILED: {type(exc).__name__}: {exc}")
 
 # %% [markdown]
@@ -502,17 +491,88 @@ for name, idata in [("1: flat", idata_flat),
 # The Pareto $k$ diagnostic detects when it fails, and values above about 0.7
 # mean the estimate for that point is not to be trusted.
 #
-# Look at what model 1 did. Depending on the draw it either reports a `p_loo` —
-# nominally the effective number of parameters — of several hundred for a model
-# with **four**, or it fails outright with `All tail values are the same`.
-# Neither is a discovery about the model; both are LOO telling you it could not
-# do its job. A grossly misspecified model makes some observations so
-# surprising that those points dominate the importance weights, and the Pareto
-# fit that LOO relies on has nothing left to work with.
+# Here every one of the 1500 points clears that bar for all three models, so the
+# `elpd_loo` column is worth reading. This is the *good* case, and it is worth
+# seeing once so that you recognise the bad one.
+#
+# Now the uncomfortable part. **Model 1 is visibly wrong** — you just watched it
+# miss the accuracy pattern and the RT pattern in every one of the six cells.
+# Its diagnostics are nonetheless immaculate: a `p_loo` of about 4.7 for a model
+# with four parameters, which is exactly right, and not one bad $k$.
+#
+# A clean Pareto $k$ column does **not** say the model is any good. It says LOO
+# managed to compute its own estimate reliably. Those are different claims, and
+# only the second one is being made.
 #
 # So: use LOO to separate *plausible* models from each other, and use posterior
 # predictive plots to reject the implausible ones. Do not ask LOO to rank a
 # model that the plots already told you is wrong.
+#
+# </details>
+
+# %% [markdown]
+# ### Is that gap big enough to believe?
+#
+# The loop ranks the models but leaves open the question a reviewer would
+# actually ask: model 3 beats model 2 by a couple of hundred `elpd` — is that
+# decisive, or is it noise? **`az.compare` answers exactly that**, and it is the
+# call you would reach for in practice rather than the loop above.
+
+# %%
+comparison = az.compare(
+    {"1: flat": idata_flat,
+     "2: drift by coherence": idata_drift,
+     "3: drift + boundary": idata_both},
+    # The default reference is the BEST model, so every difference comes out
+    # negative. Pointing it at the baseline instead matches the 1 -> 2 -> 3
+    # story we have been telling. `reference=` is new in ArviZ 1.x.
+    reference="1: flat",
+)
+print(comparison)
+
+# %% [markdown]
+# The column that earns this call is **`dse`** — the standard error of the
+# *difference*. Model 3 improves on the baseline by roughly 430, with a `dse`
+# around 28: about fifteen standard errors, so nothing about that ordering is in
+# doubt. Model 2's smaller gain clears its own `dse` just as comfortably.
+#
+# Notice that `dse` is **not** something you could have reconstructed from the
+# `se` column beside it. Each model's own `elpd` carries a standard error near
+# 50, yet the *difference* between two of them is pinned down to 18–28 — a
+# smaller uncertainty than either individual number. That is not a
+# contradiction. The models are scored on the **same 1500 observations**, so
+# their errors are strongly correlated, and `compare` takes the difference
+# **pointwise, per observation**, before summing. Whatever the two models find
+# equally hard cancels out, and only the disagreement is left to be uncertain
+# about.
+#
+# This is why "the intervals overlap, so the models are indistinguishable" is
+# the wrong reading of a comparison table. Read `elpd_diff` against `dse`, never
+# `elpd` against `se`.
+#
+# `weight` is the third thing worth a glance: these are stacking weights, the
+# blend that would predict best. Model 3 takes all of it, so there is nothing to
+# gain here from averaging the candidates together.
+
+# %%
+# `plot_compare` returns a PlotCollection. Assign it — letting it be the cell's
+# value prints `<arviz_plots.plot_collection.PlotCollection at 0x...>` above the
+# figure.
+_ = az.plot_compare(comparison)
+
+# %% [markdown]
+# <details class="sbi-note">
+# <summary>📝 <b>Two practical notes on <code>az.compare</code></b></summary>
+#
+# **It is all-or-nothing.** If LOO cannot be computed for *one* model, the whole
+# call raises (`Encountered error trying to compute ELPD from model ...`) and
+# you get no table at all. That is why the loop above catches per model: on a
+# set of candidates where one is badly misspecified, the loop still shows you
+# the rows that worked. Run the loop first, then `compare`.
+#
+# **It accepts already-computed results.** The dictionary takes either fits or
+# `ELPDData` objects, so `az.compare({name: loo_result, ...})` reuses the
+# `az.loo` calls you have already paid for instead of repeating them.
 #
 # </details>
 

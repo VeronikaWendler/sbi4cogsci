@@ -331,9 +331,6 @@ fig.tight_layout()
 # **Step 1 — write the function.** Nothing library-specific: it takes time `t`
 # plus its own parameters, and returns the boundary at that time.
 #
-# The one rule that matters: it returns the **final boundary value**, `a`
-# included. `a` is an argument *to your function*, not a separate multiplier the
-# library applies afterwards — so `a` must be in its signature.
 
 # %%
 import numpy as np
@@ -405,28 +402,62 @@ print("param_bounds_dict:", cfg_custom["param_bounds_dict"])
 
 # %%
 my_sim = Simulator(model=cfg_custom)
-o_slow = my_sim.simulate(theta={"v": 0.8, "a": 1.5, "z": 0.5, "t": 0.2, "rate": 0.15},
-                         n_samples=6000, random_state=RANDOM_SEED)
-o_fast = my_sim.simulate(theta={"v": 0.8, "a": 1.5, "z": 0.5, "t": 0.2, "rate": 1.2},
-                         n_samples=6000, random_state=RANDOM_SEED)
+A0, RATES = 1.5, [0.15, 1.2]
+runs = {r: my_sim.simulate(theta={"v": 0.8, "a": A0, "z": 0.5, "t": 0.2, "rate": r},
+                           n_samples=6000, random_state=RANDOM_SEED)
+        for r in RATES}
 
-fig, ax = plt.subplots(figsize=(7.0, 3.8))
-for o, colour, lbl in [(o_slow, S.PRIMARY, "rate = 0.15 (slow collapse)"),
-                       (o_fast, S.NAIVE, "rate = 1.2 (fast collapse)")]:
-    lower, upper = S.signed_rt_hist(ax, o["rts"], o["choices"],
+# The same two-panel look as the `angle` figure above: the boundary on the left,
+# what it does to the data on the right.
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.5, 4.0))
+
+# Left: both bounds, from OUR function — no hard-coded formula, so the picture
+# cannot drift away from what was actually simulated.
+t_grid = np.linspace(0, 3, 200)
+ax1.plot(t_grid, np.full_like(t_grid, A0), color=S.PRIMARY, lw=2,
+         label="ddm (constant)")
+ax1.plot(t_grid, -np.full_like(t_grid, A0), color=S.PRIMARY, lw=2)
+for r, ls in zip(RATES, ["--", ":"]):
+    bound = exp_collapse(t_grid, a=A0, rate=r)
+    ax1.plot(t_grid, bound, color=S.NAIVE, linestyle=ls, lw=2,
+             label=f"exp_collapse, rate={r}")
+    ax1.plot(t_grid, -bound, color=S.NAIVE, linestyle=ls, lw=2)
+ax1.axhline(0.0, color=S.MUTED, lw=1, ls="-")           # start point, z = 0.5
+# Labels sit clear of the exponential, which unlike the linear `angle` bound
+# hugs zero on the right-hand side of the panel.
+ax1.text(0.06, 0.10, "start point ($z = 0.5$)", fontsize=8, color=S.MUTED)
+ax1.text(2.95, 1.74, "upper: choice $+1$", fontsize=9, color=S.MUTED,
+         ha="right", va="center")
+ax1.text(0.06, -1.74, "lower: choice $-1$", fontsize=9, color=S.MUTED,
+         ha="left", va="center")
+ax1.set(title="Both decision boundaries over time", xlabel="time (s)",
+        ylabel="evidence", ylim=(-1.95, 1.95))
+ax1.legend(loc="lower right", fontsize=8)
+
+# Right: what that does to RTs, split by which boundary was reached.
+for r, colour, lbl in [(RATES[0], S.PRIMARY, f"rate = {RATES[0]} (slow collapse)"),
+                       (RATES[1], S.NAIVE, f"rate = {RATES[1]} (fast collapse)")]:
+    o = runs[r]
+    lower, upper = S.signed_rt_hist(ax2, o["rts"], o["choices"],
                                     color=colour, label=lbl)
     print(f"{lbl:32s} P(upper) = {upper:.3f}")
-ax.set(title="A boundary you invented, five minutes ago", ylabel="density")
-S.label_choice_axis(ax, rt_max=4.0)
-ax.legend(loc="upper left", fontsize=9)
+ax2.set(title="A boundary you invented, five minutes ago", ylabel="density")
+S.label_choice_axis(ax2, rt_max=4.0)
+ax2.legend(loc="upper left", fontsize=9)
 fig.tight_layout()
 
 # %% [markdown]
-# A faster collapse means less evidence is required as time passes, so responses
-# arrive sooner — and because the bound drops symmetrically on both sides, the
-# accuracy advantage shrinks too. Both effects are visible at once in the
-# mirrored plot: the fast-collapse curve is pulled toward zero on *both* sides,
-# and its two sides are more nearly equal in area.
+# Read it exactly like the `angle` figure. On the left, the exponential decays
+# toward zero rather than hitting it at a fixed time the way a linear collapse
+# does — so there is always *some* evidence required, however long the trial
+# runs. On the right, a faster collapse means less evidence is needed as time
+# passes, so responses arrive sooner, and because the bound drops symmetrically
+# the accuracy advantage shrinks with it: the fast-collapse curve is pulled
+# toward zero on *both* sides and its two sides are closer in area.
+#
+# Note the left panel is drawn by calling `exp_collapse` itself rather than by
+# re-typing the formula. A figure that re-implements what it illustrates is one
+# edit away from lying about it.
 
 # %% [markdown]
 # ### Check the boundary rather than trusting it
@@ -436,37 +467,14 @@ fig.tight_layout()
 # settles the "is `a` applied twice?" question directly.
 
 # %%
-b = o_slow["metadata"]["boundary"]
-print(f"b(0)  = {b[0]:.4f}      <- equals a = 1.5 exactly, not 1.5^2 = 2.25")
+b = runs[RATES[0]]["metadata"]["boundary"]        # the slow-collapse run
+print(f"b(0)  = {b[0]:.4f}      <- equals a = {A0} exactly, not {A0}^2 = {A0**2}")
 print(f"b(t)  = {np.round(b[:4], 4)} ...")
 
 # And it is the function we wrote, evaluated on that grid.
-grid = np.arange(len(b)) * o_slow["metadata"]["delta_t"]
+grid = np.arange(len(b)) * runs[RATES[0]]["metadata"]["delta_t"]
 print("matches exp_collapse on the same grid:",
-      np.allclose(b, exp_collapse(grid, a=1.5, rate=0.15), atol=1e-6))
-
-# %% [markdown]
-# That check is worth running whenever you attach a boundary, and not only to
-# settle an argument about `a` — because on some base models it would come back
-# telling you the boundary never took effect at all.
-
-# %%
-# Does this base model's engine actually honour a custom boundary? Sweep the
-# collapse rate: if mean RT does not move, your function is being ignored.
-for base in ["ddm", "angle", "ddm_legacy", "lba_angle_3"]:
-    cfg = ModelConfigBuilder.from_model(base, boundary=exp_collapse,
-                                        boundary_name="exp_collapse",
-                                        boundary_params=["a", "rate"])
-    theta = dict(zip(cfg["params"], cfg["default_params"]))
-    theta["a"] = 1.5
-    rts = []
-    for rate in (0.01, 5.0):
-        out = Simulator(cfg).simulate({**theta, "rate": rate}, n_samples=1500,
-                                      random_state=RANDOM_SEED)
-        rts.append(float(out["rts"][out["rts"] > 0].mean()))
-    moved = abs(rts[0] - rts[1]) > 0.05
-    print(f"  {base:14s} mean RT  {rts[0]:6.3f} -> {rts[1]:6.3f}   "
-          f"{'boundary honoured' if moved else 'BOUNDARY IGNORED'}")
+      np.allclose(b, exp_collapse(grid, a=A0, rate=RATES[0]), atol=1e-6))
 
 # %% [markdown]
 # <details class="sbi-warn" open>
@@ -575,7 +583,7 @@ print(f"P(choice = +1) = {(ch_r == 1).mean():.3f}   "
 fig, ax = plt.subplots(figsize=(7.0, 3.6))
 lower, upper = S.signed_rt_hist(ax, rt_r, ch_r, rt_max=3.0,
                                 color=S.PRIMARY, label="racing exponentials",
-                                fill=True)
+                                fill=False)
 ax.set(title="A model that is not a diffusion", ylabel="density")
 S.label_choice_axis(ax, rt_max=3.0,
                     lower="$-1$ (accumulator 0 won)",
@@ -693,7 +701,7 @@ print(f"\nwrote {outdir / 'ddm_two_designs.csv'}")
 # committed.
 
 # %% [markdown]
-# ## 6. Where to go next
+# ## 6. Other functionality (not less important, but we can only cover so much)
 #
 # We stayed inside the two-choice diffusion family. The package goes
 # considerably further, and two directions are worth knowing about:
@@ -718,6 +726,9 @@ print(f"\nwrote {outdir / 'ddm_two_designs.csv'}")
 #
 # Both plug into HSSM the same way the models here do. If your project involves
 # eye-tracking or learning, start there rather than bolting it on later.
+#
+# **Training Data Generation** - ssms has functionality to generate training data directly for
+# multiple downstream amortization libraries (`BayesFlow`, `LanFactory` (holds our own network + trianing algorithms), `sbi`)
 
 # %% [markdown]
 #

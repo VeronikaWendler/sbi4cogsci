@@ -15,15 +15,22 @@ marimo cell with `mo.ui.slider` without re-running an MCMC fit on every drag:
     result = pooling_experiment(...)          # once, in its own cell
     fig_shrinkage(result, highlight_n=n.value)  # re-runs on every slider move
 
-**Why these build `Figure()` rather than calling `plt.subplots()`.** A figure
-created through pyplot is registered in pyplot's global list, and a Jupyter
-cell ending in `fig_shrinkage(result)` then renders it *twice*: once because the
-inline backend flushes every open figure at the end of the cell
-(`display_data`), and again because the returned Figure is the cell's value
-(`execute_result`). Constructing the Figure directly keeps it out of that global
-registry, so the return value is the only thing displayed — one copy, in the
-notebook and in marimo alike. `savefig` works exactly as before, which is what
-the slide baker uses.
+**Why these create a figure and immediately close it.** A figure left open in
+pyplot's global list gets rendered *twice* by a Jupyter cell ending in
+`fig_shrinkage(result)`: once because the inline backend flushes every open
+figure at the end of the cell (`display_data`), and again because the returned
+Figure is the cell's value (`execute_result`). Closing it removes the first,
+leaving the return value as the only thing displayed.
+
+The figure is still created *through* pyplot rather than as a bare
+`Figure()`, and that part is not optional. IPython only registers a renderer
+for `matplotlib.figure.Figure` once the inline backend has been initialised by
+a first pyplot call. A bare Figure returned before that has ever happened
+displays as the text `<Figure size 792x484 with 1 Axes>` and **no image at
+all** — which depends on what other cells ran first, so it fails silently and
+inconsistently. Going through `plt.subplots` guarantees the backend is live.
+
+`savefig` is unaffected by the close, which is what the slide baker relies on.
 
 Colours come from `sbi4cogsci_style`, so a colour means the same thing here as
 in every other session.
@@ -32,15 +39,22 @@ in every other session.
 from __future__ import annotations
 
 import numpy as np
-from matplotlib.figure import Figure
 
 import sbi4cogsci_style as S
 
 
 def _new_figure(figsize, nrows=1, ncols=1):
-    """A standalone Figure plus its Axes — deliberately not via pyplot."""
-    fig = Figure(figsize=figsize)
-    return fig, fig.subplots(nrows, ncols)
+    """A Figure plus its Axes, detached from pyplot's global figure list.
+
+    Created through pyplot so the inline backend is initialised, then closed so
+    the end-of-cell flush does not display it a second time. See the module
+    docstring — both halves are load-bearing.
+    """
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+    plt.close(fig)
+    return fig, axes
 
 
 # --------------------------------------------------------------------------
