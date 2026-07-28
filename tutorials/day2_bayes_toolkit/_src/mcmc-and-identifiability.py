@@ -64,7 +64,14 @@ def _fetch(module):
 
 
 if IN_COLAB:
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pymc>=6.2", "arviz>=1.2", "hssm>=0.4"],
+    # numba>=0.61 is REQUIRED, not cosmetic. pytensor resolves linker="auto" to
+    # its numba backend, and numba renamed FunctionModel's first field
+    # addr -> c_addr in 0.61. Colab preinstalls an older numba, and pytensor
+    # declares numba only as an optional extra, so pip leaves it in place and
+    # any MvNormal (SolveTriangular has no C implementation) dies with
+    # KeyError: "FunctionModel does not have a field named 'c_addr'".
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                    "numba>=0.61", "pymc>=6.2", "arviz>=1.2", "hssm>=0.4"],
                    check=True)
     for _mod in ["sbi4cogsci_style.py"]:
         print(f"  fetched {_mod} from {_fetch(_mod)}")
@@ -92,55 +99,18 @@ print("pymc", pm.__version__, "| arviz", az.__version__)
 # %% [markdown]
 # ## 1. What is MCMC actually trying to do?
 #
-# We have a distribution $\pi(\theta)$ over some parameter space, and we want
-# to compute expectations under it:
+# Everything you want from a posterior — a mean, a credible interval, a
+# posterior predictive — is an integral against it, and in more than two or
+# three dimensions those integrals are hopeless. So we stop computing them and
+# **draw samples** instead, then average.
 #
-# $$
-# \mathbb{E}_{\pi}[f] \;=\; \int f(\theta)\, \pi(\theta) \, d\theta .
-# $$
+# Which leaves one obstacle. Bayes' rule gives the posterior as
+# $p(y \mid \theta)\,p(\theta) / p(y)$, and that denominator — the **evidence**
+# — is itself an integral over the whole parameter space, exactly the thing we
+# just admitted we cannot do.
 #
-# A posterior mean is $f(\theta) = \theta$; a credible interval is a couple of
-# quantiles; a posterior predictive is an expectation of the likelihood. All of
-# them are integrals against $\pi$.
-#
-# In more than two or three dimensions those integrals are hopeless
-# analytically and hopeless on a grid. So we give up on computing them and
-# instead **draw samples** $\theta^{(1)}, \dots, \theta^{(N)} \sim \pi$ and
-# average:
-#
-# $$
-# \mathbb{E}_{\pi}[f] \;\approx\; \frac{1}{N} \sum_{i=1}^{N} f\!\left(\theta^{(i)}\right).
-# $$
-#
-# <details class="sbi-note">
-# <summary>📝 <b><i>&pi;</i> does not have to be a posterior</b></summary>
-#
-# Nothing above mentions Bayes. MCMC is a general recipe for sampling from *any*
-# distribution you can evaluate up to a constant — it is used in statistical
-# physics, combinatorial optimisation and rendering. We happen to point it at
-# posteriors, and for the first examples below $\pi$ will just be a distribution
-# we picked because we know the right answer.
-#
-# </details>
-#
-# ### The normalizing constant, and why we can ignore it
-#
-# For a posterior, Bayes' rule says
-#
-# $$
-# \pi(\theta) \;=\; p(\theta \mid y) \;=\;
-# \frac{p(y \mid \theta)\, p(\theta)}{p(y)},
-# \qquad p(y) = \int p(y \mid \theta) p(\theta)\, d\theta .
-# $$
-#
-# The numerator is easy: it is the likelihood times the prior, both of which you
-# wrote down. The denominator $p(y)$ — the **evidence** — is an integral over
-# the whole parameter space, and it is exactly the kind of integral we just
-# admitted we cannot do.
-#
-# The escape is that **every MCMC algorithm only ever looks at ratios**. Write
-# the unnormalised density as $\tilde{\pi}(\theta) = p(y \mid \theta)p(\theta)$,
-# so $\pi = \tilde{\pi} / p(y)$. Then for any two points,
+# The escape is that **every MCMC algorithm only ever looks at ratios.** Writing
+# the unnormalised density as $\tilde{\pi} = p(y \mid \theta)p(\theta)$,
 #
 # $$
 # \frac{\pi(\theta')}{\pi(\theta)}
@@ -148,9 +118,9 @@ print("pymc", pm.__version__, "| arviz", az.__version__)
 # \;=\; \frac{\tilde{\pi}(\theta')}{\tilde{\pi}(\theta)} .
 # $$
 #
-# **$p(y)$ cancels.** That single cancellation is what makes Bayesian
-# computation possible at all: you never need the evidence to *sample* the
-# posterior — only to compare whole models against each other.
+# **$p(y)$ cancels**, and you never need the evidence to *sample* a posterior —
+# only to compare whole models against each other. (Nothing here mentions Bayes,
+# incidentally: MCMC samples any distribution you can evaluate up to a constant.)
 
 # %% [markdown]
 # ## 2. A Metropolis sampler in ten lines
@@ -221,9 +191,8 @@ ax.legend()
 fig.tight_layout()
 
 # %% [markdown]
-# Twelve lines of Python, no gradients, no library — and the histogram lands on
-# the density. Note that we **never computed the normalizing constant**; the
-# sampler only ever saw ratios.
+# A dozen lines of Python, no gradients, no library — and the histogram lands on
+# the density, without ever computing the normalizing constant.
 #
 # > **Poll.** Our proposal was symmetric: $\theta' = \theta + \text{Normal}(0, s^2)$.
 # > What breaks if the proposal is *asymmetric* and we keep this same rule?
@@ -397,11 +366,6 @@ def log_target_gaussian(rho):
     return log_target
 
 
-# The ellipse has a long axis along (1, 1) and a short axis along (1, -1).
-# Everything below reads more clearly in those coordinates than in x0 / x1.
-ALONG = np.array([1.0, 1.0]) / np.sqrt(2.0)      # up the ridge
-ACROSS = np.array([1.0, -1.0]) / np.sqrt(2.0)    # across it
-
 RHOS = [0.0, 0.9, 0.99]
 for rho in RHOS:
     # the sd along each axis is sqrt(1 +/- rho)
@@ -419,12 +383,14 @@ for rho in RHOS:
 
 
 # %%
-def plot_path(ax, path, rho, title, alpha=0.9):
+def plot_path(ax, path, rho, title, alpha=0.1):
     """Chain path over the target's contours. Used for every sampler here.
 
-    `alpha` fades the path: a 40-step Gibbs staircase wants to be opaque, a
-    300-step scribble wants to be faint or it reads as a solid blob. The start
-    marker stays opaque either way — it is a landmark, not part of the trace.
+    The path is drawn faint on purpose. Where the chain sits still, hundreds of
+    overlapping segments stack up and the ink goes dark; where it moves freely,
+    each segment is drawn once and stays pale. So darkness *is* the diagnostic:
+    a black blob is a chain that stopped. The start marker stays opaque — it is
+    a landmark, not part of the trace.
     """
     g = np.linspace(-3.5, 3.5, 200)
     X0, X1 = np.meshgrid(g, g)
@@ -444,17 +410,16 @@ for ax, rho in zip(axes, RHOS):
     path, _ = metropolis(log_target_gaussian(rho), start=[0.0, 0.0],
                          n_steps=N_SHOW, step_size=1.0, seed=RANDOM_SEED)
     ax.plot([], [])
-    plot_path(ax, path, rho, rf"$\rho$ = {rho}", alpha=0.35)
+    plot_path(ax, path, rho, rf"$\rho$ = {rho}")
 axes[0].legend(fontsize=9, loc="upper left")
 fig.suptitle(f"{N_SHOW} Metropolis moves, step size 1.0 throughout", y=1.02)
 fig.tight_layout()
 
 # %% [markdown]
-# Read those left to right. At $\rho = 0$ the chain wanders freely over the
-# whole target. At $\rho = 0.99$ it is pinned inside a thin diagonal sliver and
-# barely travels its length — the same 300 moves cover a small fraction of the
-# distribution. The proposal has not changed; only the shape it is trying to
-# explore has.
+# Read those left to right. At $\rho = 0$ the chain wanders over the whole
+# target; at $\rho = 0.99$ it is pinned in a thin diagonal sliver, and the dark
+# patches are where it sat still for many moves in a row. The proposal has not
+# changed — only the shape it is trying to explore.
 #
 # Now put a number on that.
 
@@ -470,11 +435,17 @@ def run_chains(log_target, step_size, n_chains=4, n_steps=25_000, warmup=5_000):
     return np.stack(kept), float(np.mean(accs))     # (chain, draw, 2)
 
 
-def ess_per_draw(chains, direction):
-    """ESS as a fraction of draws, for the projection onto `direction`."""
-    projected = chains @ direction                   # (chain, draw)
-    dt = az.convert_to_datatree({"x": projected})
-    return float(az.ess(dt, var_names=["x"]).x) / projected.size
+def ess_per_draw(chains):
+    """Effective sample size, as a fraction of the draws taken.
+
+    MCMC draws are **correlated**, so N of them carry less information than N
+    independent ones. ESS answers "how many independent draws would this have
+    been worth?" — so ESS/draw is near 1 for a sampler that is doing well, and
+    near 0 for one that is barely moving. We read it off the first coordinate,
+    which is all we need here.
+    """
+    dt = az.convert_to_datatree({"x": chains[..., 0]})
+    return float(az.ess(dt, var_names=["x"]).x) / chains[..., 0].size
 
 
 STEPS = [0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0]
@@ -484,63 +455,40 @@ for rho in RHOS:
     for s in STEPS:
         chains, acc = run_chains(lt, s)
         sweep.append({"rho": rho, "step_size": s, "acceptance": acc,
-                      "ESS/draw along": ess_per_draw(chains, ALONG),
-                      "ESS/draw across": ess_per_draw(chains, ACROSS)})
+                      "ESS/draw": ess_per_draw(chains)})
 sweep = pd.DataFrame(sweep)
-
-for rho in RHOS:
-    print(f"\n--- rho = {rho} " + "-" * 46)
-    print(sweep[sweep.rho == rho].drop(columns="rho")
-          .to_string(index=False, float_format=lambda v: f"{v:10.4f}"))
 
 # %% [markdown]
 # ### The squeeze
+#
+# Sweep the step size at each correlation and look at what the best achievable
+# ESS is.
 
 # %%
-fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
-for ax, direction, name in [(axes[0], "along", "ALONG the ridge (the hard one)"),
-                            (axes[1], "across", "ACROSS the ridge (the easy one)")]:
-    for rho, colour in zip(RHOS, [S.ALT, S.PRIMARY, S.NAIVE]):
-        block = sweep[sweep.rho == rho]
-        ax.plot(block["step_size"], block[f"ESS/draw {direction}"], "o-",
-                color=colour, label=f"$\\rho$ = {rho}")
-    ax.set(xscale="log", yscale="log", xlabel="step size", title=name)
-axes[0].set_ylabel("ESS per draw")
-axes[0].legend(fontsize=9)
-fig.suptitle("No step size is good in both directions at once", y=1.02)
+fig, ax = plt.subplots(figsize=(7.0, 4.2))
+for rho, colour in zip(RHOS, [S.ALT, S.PRIMARY, S.NAIVE]):
+    block = sweep[sweep.rho == rho]
+    ax.plot(block["step_size"], block["ESS/draw"], "o-", color=colour,
+            label=f"$\\rho$ = {rho}")
+ax.set(xscale="log", yscale="log", xlabel="step size", ylabel="ESS per draw",
+       title="Every step size is bad once the target is a ridge")
+ax.legend(fontsize=9)
 fig.tight_layout()
 
-# %%
-worst = sweep[sweep.rho == 0.99]
-best_along = worst.loc[worst["ESS/draw along"].idxmax()]
-best_across = worst.loc[worst["ESS/draw across"].idxmax()]
-uncorrelated = sweep[sweep.rho == 0.0]["ESS/draw along"].max()
-
-print("at rho = 0.99:")
-print(f"  best step size ALONG  the ridge: {best_along['step_size']:5.2f}"
-      f"   (ESS/draw {best_along['ESS/draw along']:.4f})")
-print(f"  best step size ACROSS the ridge: {best_across['step_size']:5.2f}"
-      f"   (ESS/draw {best_across['ESS/draw across']:.4f})")
-print("  -> the two directions want DIFFERENT step sizes, and you get one.\n")
-print(f"  best achievable along the ridge : {best_along['ESS/draw along']:.4f}")
-print(f"  best achievable when rho = 0    : {uncorrelated:.4f}")
-print(f"  -> even at its own optimum, "
-      f"{uncorrelated / best_along['ESS/draw along']:.0f}x worse than "
-      "the uncorrelated target.")
+best = sweep.groupby("rho")["ESS/draw"].max()
+print("best ESS per draw, over all step sizes tried:")
+for rho, v in best.items():
+    print(f"  rho = {rho:<5} {v:.4f}"
+          + ("" if rho == 0.0 else f"   ({best[0.0] / v:5.0f}x worse than rho = 0)"))
 
 # %% [markdown]
-# That is the difference from the mixture. There, tuning *worked* — there was a
-# good step size and it was genuinely good. Here every step size is bad, in one
-# of two ways:
+# That is the difference from the mixture. There, tuning *worked*. Here every
+# step size is bad, in one of two ways: **small steps** are almost always
+# accepted but crawl, and **large steps** are big enough to travel the ridge but
+# a *circular* step that large mostly lands off it sideways and is rejected.
 #
-# - **small steps** stay inside the narrow width, so they are almost always
-#   accepted, and they crawl along a ridge fourteen times longer than it is wide;
-# - **large steps** are big enough to travel the ridge, but a *circular* step
-#   that large mostly lands off the ridge sideways, and is rejected.
-#
-# The two failures meet in a flat, mediocre middle. There is no knife-edge
-# setting you might have missed — the whole range is poor, and the best of it is
-# an order of magnitude below what the same sampler achieves on a round target.
+# There is no knife-edge setting you missed — the whole range is poor, and the
+# best of it is far below what the same sampler manages on a round target.
 
 # %% [markdown]
 # <details class="sbi-warn" open>
@@ -554,37 +502,31 @@ print(f"  -> even at its own optimum, "
 # %%
 chains_bad, acc_bad = run_chains(log_target_gaussian(0.99), step_size=0.05)
 n_draws = chains_bad[..., 0].size
-ess_bad = ess_per_draw(chains_bad, ALONG)
+ess_bad = ess_per_draw(chains_bad)
 
 print(f"step_size 0.05, rho 0.99:  acceptance {acc_bad:.1%}")
 print(f"  sd(x0) pooled over chains = {chains_bad[..., 0].std():.3f}"
       "   (the truth is exactly 1.000)")
-print(f"  ESS/draw along the ridge  = {ess_bad:.5f}")
+print(f"  ESS/draw                  = {ess_bad:.5f}")
 print(f"  -> about {ess_bad * n_draws:.0f} independent draws out of {n_draws:,}\n")
 
-# The same quantity, chain by chain — and where each chain ended up.
-along_bad = chains_bad @ ALONG
-for c in range(along_bad.shape[0]):
-    print(f"  chain {c}: mean along the ridge {along_bad[c].mean():+.2f}, "
-          f"sd {along_bad[c].std():.2f}   (true sd {np.sqrt(1 + 0.99):.2f})")
+# The same quantity, chain by chain.
+for c in range(chains_bad.shape[0]):
+    x0 = chains_bad[c, :, 0]
+    print(f"  chain {c}: mean x0 {x0.mean():+.2f}, sd {x0.std():.2f}"
+          "   (true sd 1.00)")
 
 # %% [markdown]
 # A marginal standard deviation in the right neighbourhood is **not** evidence
 # that the chain worked. This one lands within a few percent of the truth while
 # containing a couple of dozen genuinely independent draws.
 #
-# And look at *why* it lands there, because the reason is not the comforting
-# one. At $\rho = 0.99$ the variance of $x_0$ is **99.5% the along-the-ridge
-# direction** — the hard one — since $\operatorname{Var} = (1+\rho)/2$ along
-# against $(1-\rho)/2$ across. So the marginal that came out right is precisely
-# the direction the chain could not explore.
-#
 # The per-chain numbers show the trick. Not one of the four gets the width
-# right, and they do not even err in the same direction — three are too narrow
-# because they only saw part of the ridge, one is too wide. Their *means* also
-# sit at different points along the ridge, and that between-chain scatter refills
-# roughly the variance the narrow ones are missing. Pooling manufactures a
-# plausible number out of four separately wrong ones.
+# right, and they do not even err in the same direction. Their *means* sit at
+# different points, and that between-chain scatter refills roughly the variance
+# the narrow chains are missing — so pooling manufactures a plausible number out
+# of four separately wrong ones. That is the argument for running several chains
+# **and** checking $\hat{R}$, which is what notices the disagreement.
 #
 # Which is the argument for doing both: pool several chains **and** check
 # $\hat{R}$, which is what notices that the chains disagree. Do not eyeball
@@ -648,8 +590,7 @@ for ax, (name, idt) in zip(axes, [("pm.Metropolis", idata_mh), ("NUTS", idata_nu
     # A rejected proposal repeats the current point, so an "exactly repeated"
     # draw is a wasted iteration. NUTS has none: every draw is a new point.
     repeated = np.mean(np.all(np.diff(path, axis=0) == 0, axis=1))
-    plot_path(ax, path, 0.99, f"{name}\n{repeated:.0%} of draws are repeats",
-              alpha=0.35)
+    plot_path(ax, path, 0.99, f"{name}\n{repeated:.0%} of draws are repeats")
 axes[0].legend(fontsize=9, loc="upper left")
 fig.suptitle(f"{N_SHOW_PYMC} post-warmup draws at $\\rho = 0.99$", y=1.02)
 fig.tight_layout()
@@ -723,13 +664,12 @@ gibbs_chains = {rho: np.stack([gibbs(rho, seed=RANDOM_SEED + c)[5_000:]
 # For this target Gibbs turns each coordinate into an AR(1) process with lag-1
 # correlation exactly rho^2 — so a sampler with NO knobs and a 100% acceptance
 # rate is still provably slow here, by an amount you can write down in advance.
-print(f"at rho = 0.99, Gibbs ESS/draw:  "
-      f"ACROSS the ridge {ess_per_draw(gibbs_chains[0.99], ACROSS):.3f}   "
-      f"ALONG it {ess_per_draw(gibbs_chains[0.99], ALONG):.4f}")
+print(f"at rho = 0.99, Gibbs ESS/draw = "
+      f"{ess_per_draw(gibbs_chains[0.99]):.4f}")
 
 # %% [markdown]
-# Excellent in one direction, hopeless in the other — and no setting exists
-# that would trade one for the other, because there is no setting.
+# A sampler with no knobs, no rejections, and still two orders of magnitude
+# short of independent draws.
 #
 # The picture shows why:
 
