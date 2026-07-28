@@ -11,7 +11,7 @@ its own instructor, stack, and run command.
 
 - **Instructor:** Alexander Fengler
 - **Stack:** Python 3.12 · the shared `tutorials/` uv environment
-- **Run:** `cd tutorials && uv sync`, then open `hssm-intro.ipynb`
+- **Run:** [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/stefanradev93/sbi4cogsci/blob/main/tutorials/day3_sbi_tools/hssm-intro.ipynb) &nbsp; or locally, `cd tutorials && uv sync` then open `hssm-intro.ipynb`
 
 The shortest working HSSM model, the two defaults that fail silently
 (`[-1, +1]` response coding and a `p_outlier=0.05` lapse), the SSM-specific fit
@@ -27,7 +27,7 @@ checks, and how to plug in a likelihood you trained yourself.
 
 - **Instructors:** Alexander Fengler, Brandon Turner
 - **Stack:** Python 3.12 · the shared `tutorials/` uv environment
-- **Run:** `cd tutorials && uv sync`, then open `hierarchical-mcmc.ipynb`
+- **Run:** [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/stefanradev93/sbi4cogsci/blob/main/tutorials/day3_sbi_tools/hierarchical-mcmc.ipynb) &nbsp; or locally, `cd tutorials && uv sync` then open `hierarchical-mcmc.ipynb`
 
 Opens with [a slide deck](hierarchical-mcmc-slides.qmd); the rest is live in the
 notebook. Funnel geometry, centered vs non-centered, where the crossover between

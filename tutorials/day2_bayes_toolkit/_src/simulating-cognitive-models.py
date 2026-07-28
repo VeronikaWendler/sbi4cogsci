@@ -37,6 +37,34 @@
 # 3. **built your own model** and simulated from it,
 # 4. produced the dataset we dissect in the next session.
 
+# %% [markdown]
+# <details class="sbi-note">
+# <summary>▶️ <b>Running this on Google Colab</b></summary>
+#
+# The cell below is a no-op on your own machine. On Colab it installs the stack
+# and downloads the shared helper module, which lives one directory up in the
+# repository and is therefore not importable there.
+#
+# Expect the install to take a few minutes. If Colab asks you to restart the
+# runtime, do it and then run the cell again — the second run is a no-op.
+#
+# </details>
+
+# %%
+# --- Google Colab bootstrap; does nothing anywhere else ---------------------
+import importlib.util, subprocess, sys, urllib.request
+
+IN_COLAB = importlib.util.find_spec("google.colab") is not None
+
+if IN_COLAB:
+    _RAW = ("https://raw.githubusercontent.com/stefanradev93/sbi4cogsci/"
+            "main/tutorials/")
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "ssm-simulators>=0.13.2", "matplotlib"],
+                   check=True)
+    for _mod in ["sbi4cogsci_style.py"]:
+        urllib.request.urlretrieve(_RAW + _mod, _mod)
+    print("Colab setup done.")
+
 # %%
 import sys, pathlib, warnings
 sys.path.insert(0, str(pathlib.Path.cwd().parent))  # -> tutorials/
@@ -190,6 +218,78 @@ print(f"{n_trials:,} trials in {elapsed:.2f}s  "
 from cssm import _openmp_status
 
 _openmp_status.print_status()
+
+# %% [markdown]
+# <details class="sbi-note">
+# <summary>📝 <b>If yours says <code>OpenMP compiled: No</code></b></summary>
+#
+# The prebuilt wheels on PyPI are compiled **without** OpenMP, so `n_threads`
+# is accepted and ignored. That is what most people will see, and nothing in
+# this course needs threading.
+#
+# To turn it on you have to build from source against a local OpenMP. On macOS:
+#
+# ```bash
+# brew install libomp
+# export LIBOMP=$(brew --prefix libomp)
+# export CFLAGS="-Xpreprocessor -fopenmp -I$LIBOMP/include"
+# export LDFLAGS="-L$LIBOMP/lib -lomp"
+# uv pip install --no-binary ssm-simulators --reinstall-package ssm-simulators \
+#     "ssm-simulators==0.13.2"
+# ```
+#
+# On Linux `libgomp` usually comes with gcc and plain `CFLAGS="-fopenmp"` is
+# enough. Note a later `uv sync` reinstalls the wheel and silently undoes this —
+# re-run the command if `n_threads` stops helping.
+#
+# </details>
+
+# %% [markdown]
+# ### Does threading actually help? Measure it
+#
+# Only if OpenMP is compiled in — and then only for the right *shape* of
+# workload. This is the shape rule from section 1 showing up again as a
+# performance question.
+
+# %%
+if _openmp_status.is_openmp_available():
+    def bench(model, theta, n_samples, label):
+        sim_b = Simulator(model=model)
+        times = []
+        for nt in (1, 8):
+            sim_b.simulate(theta=theta, n_samples=n_samples, random_state=1,
+                           n_threads=nt)                      # warm up
+            t0 = time.time()
+            sim_b.simulate(theta=theta, n_samples=n_samples, random_state=1,
+                           n_threads=nt)
+            times.append(time.time() - t0)
+        print(f"  {label:38s} 1 thread {times[0]:5.2f}s   "
+              f"8 threads {times[1]:5.2f}s   speedup {times[0] / times[1]:4.2f}x")
+
+    n_sweep = 2_000
+    theta_many = np.column_stack([np.linspace(-2, 2, n_sweep), np.full(n_sweep, 1.2),
+                                  np.full(n_sweep, 0.5), np.full(n_sweep, 0.3)])
+    bench("ddm", theta_matrix, 1, "100k trials x 1 sample")
+    bench("ddm", theta_many, 200, "2k trials x 200 samples")
+else:
+    print("OpenMP not compiled in — n_threads is accepted and ignored. "
+          "See the note above.")
+
+# %% [markdown]
+# The two rows go in **opposite directions**, and the reason is worth knowing.
+#
+# Threading parallelises the samples drawn for each parameter set. The
+# trial-varying shape — 100,000 rows, one sample each — gives every thread a
+# single short random walk, so coordination costs more than the work itself and
+# threading comes out **slower than one thread**. The sweep shape — a couple of
+# thousand rows with hundreds of samples each — hands every thread a real chunk
+# of work, and it goes several times faster.
+#
+# The general lesson is the one that applies to every parallelism knob you will
+# ever meet: **it is not free, and whether it pays depends on the granularity of
+# the work.** Measure on your own workload rather than assuming more threads is
+# better. And note that neither row is a bottleneck at this scale — both are
+# under a couple of seconds for hundreds of thousands of trials.
 
 
 # %% [markdown]

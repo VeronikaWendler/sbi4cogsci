@@ -9,7 +9,24 @@
 - **Stack:** Python 3.12 · the shared `tutorials/` uv environment (PyMC, ArviZ,
   bambi, ssm-simulators)
 
-## Run
+## Run it
+
+Two ways, and you do not need both.
+
+**In the browser (nothing to install).** Each notebook opens in Google Colab and
+installs what it needs in its first cell:
+
+| | |
+|---|---|
+| A tutorial on PyMC | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/stefanradev93/sbi4cogsci/blob/main/tutorials/day2_bayes_toolkit/pymc-intro.ipynb) |
+| Simulating data from a cognitive model | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/stefanradev93/sbi4cogsci/blob/main/tutorials/day2_bayes_toolkit/simulating-cognitive-models.ipynb) |
+| Toy models for parameter estimation | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/stefanradev93/sbi4cogsci/blob/main/tutorials/day2_bayes_toolkit/toy-models.ipynb) |
+| MCMC methods, and when inference falls apart | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/stefanradev93/sbi4cogsci/blob/main/tutorials/day2_bayes_toolkit/mcmc-and-identifiability.ipynb) |
+
+The install takes a few minutes on the first cell. If Colab asks you to restart
+the runtime, do it and re-run that cell.
+
+**Locally**, which is faster and what the timings below assume:
 
 ```bash
 cd tutorials && uv sync

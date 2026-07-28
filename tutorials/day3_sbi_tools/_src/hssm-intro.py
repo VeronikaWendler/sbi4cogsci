@@ -37,6 +37,37 @@
 # | extras features | — | native lapse processes, proprietary plots, "surrogate -> PyMC RV" constructors |
 #
 
+# %% [markdown]
+# <details class="sbi-note">
+# <summary>▶️ <b>Running this on Google Colab</b></summary>
+#
+# The cell below is a no-op on your own machine. On Colab it installs the stack
+# and downloads the shared helper module, which lives one directory up in the
+# repository and is therefore not importable there.
+#
+# Expect the install to take a few minutes. If Colab asks you to restart the
+# runtime, do it and then run the cell again — the second run is a no-op.
+#
+# </details>
+
+# %%
+# --- Google Colab bootstrap; does nothing anywhere else ---------------------
+import importlib.util, subprocess, sys, urllib.request
+
+IN_COLAB = importlib.util.find_spec("google.colab") is not None
+
+if IN_COLAB:
+    _RAW = ("https://raw.githubusercontent.com/stefanradev93/sbi4cogsci/"
+            "main/tutorials/")
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pymc>=6.2", "arviz>=1.2", "hssm>=0.4"],
+                   check=True)
+    # `dot` is a system binary, not a Python package.
+    subprocess.run(["apt-get", "-qq", "install", "-y", "graphviz"],
+                   check=True)
+    for _mod in ["sbi4cogsci_style.py"]:
+        urllib.request.urlretrieve(_RAW + _mod, _mod)
+    print("Colab setup done.")
+
 # %%
 import sys, pathlib, warnings
 sys.path.insert(0, str(pathlib.Path.cwd().parent))  # -> tutorials/
