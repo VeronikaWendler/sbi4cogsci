@@ -19,7 +19,7 @@ checks, and how to plug in a likelihood you trained yourself.
 
 ## BayesFlow — amortized inference for the DMC (10:00)
 
-- **Instructors:** Stefan T. Radev, Simon Schaefer
+- **Instructors:** Stefan T. Radev
 - **Stack:** Python 3.12 · the shared `tutorials/` uv environment
 - **Run:** `cd tutorials && uv sync`, then open `dmc-bayesflow.ipynb`
 
