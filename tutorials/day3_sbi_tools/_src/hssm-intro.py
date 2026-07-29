@@ -357,7 +357,7 @@ plt.gcf().set_size_inches(7.5, 4)
 plt.tight_layout()
 
 # %% [markdown]
-# ## 5. The model the data deserves
+# ## 5. A more accurate model
 #
 # The flat model has one drift and one boundary for every trial, but we built
 # this dataset so that drift depends on `cond` and boundary tracks `theta`.
@@ -518,7 +518,6 @@ print("dropped:", sorted(set(post.data_vars) - set(coef_vars)) or "nothing (this
 # %%
 az.plot_forest(model_hier.traces, var_names=coef_vars, combined=True)
 fig = plt.gcf()
-fig.set_size_inches(7.5, 5)
 for ax in fig.axes:                    # a zero line to read "overlaps zero" off
     ax.axvline(0.0, color="0.4", ls=":", lw=1)
 fig.suptitle("Hierarchical fit — all coefficients", y=1.01)
@@ -588,30 +587,6 @@ print(f"\n{len(sim_data)} trials   P(+1) = {(sim_data.response > 0).mean():.3f}"
       f"   rt in [{sim_data.rt.min():.2f}, {sim_data.rt.max():.2f}]")
 
 # %% [markdown]
-# ### Learning a likelihood by classification
-#
-# The trick is to not learn the likelihood at all, but the **ratio**
-#
-# $$r(x, \theta) \;=\; \frac{p(x \mid \theta)}{p(x)},$$
-#
-# and to learn it by *classification*: show a network a $(\theta, x)$ pair and
-# ask whether the two were simulated **together** or **shuffled apart**. A
-# network that can tell those apart has, at its optimum, learned exactly that
-# ratio — no density estimation anywhere. BayesFlow implements the contrastive
-# version ([Miller et al., 2022](https://arxiv.org/abs/2210.06170)) as
-# `RatioApproximator`.
-#
-# **For a sampler, the ratio is as good as the likelihood.** The evidence
-# $p(x)$ does not depend on $\theta$, so it shifts every log-posterior by the
-# same constant and cancels.
-#
-# Two consequences we lean on below. It is a **classifier**, so one evaluation
-# is a single forward pass — 1.7 ms for all 1,500 trials — and the binary choice
-# is just another input feature. And the ratio **survives reparameterizing the
-# data**: the same Jacobian appears above and below and cancels, which is why we
-# can train on $\log \text{rt}$ with no correction term.
-
-# %% [markdown]
 # ### Training it
 #
 # The simulator is fast and vectorized, so we train **online** — a fresh batch
@@ -630,6 +605,9 @@ os.environ["KERAS_BACKEND"] = "jax"
 
 import keras
 import bayesflow as bf
+import pytensor
+import pytensor.tensor as pt
+from hssm.likelihoods.analytical import logp_ddm
 
 FORCE_TRAIN = False
 CKPT = pathlib.Path("checkpoints/ddm_nre.keras")
@@ -675,25 +653,6 @@ else:
     approx.save(CKPT)
 
 # %% [markdown]
-# <details class="sbi-warn">
-# <summary>⚠️ <b>Never let a batch be smaller than <code>K</code></b></summary>
-#
-# `RatioApproximator` draws `K` contrastive parameter candidates from inside
-# each batch. When a batch is smaller than `K` it clamps the count for the
-# candidates but not for the conditions, and the two stop lining up:
-#
-# ```
-# TypeError: Cannot concatenate arrays with shapes that differ ...
-#            (64, 63, 4), (64, 64, 2)
-# ```
-#
-# Training online avoids this for free — every batch is full size. With an
-# **offline** dataset the last batch is a remainder (200,000 rows at
-# `batch_size=256` leaves 64), so size the data to an exact multiple.
-#
-# </details>
-
-# %% [markdown]
 # ### From network to likelihood
 #
 # The trained ratio is `projector(classifier(...))` applied to the
@@ -715,97 +674,6 @@ def nre_logp(data, v, a, z, t):
     x = _std.maybe_standardize(x, key="inference_conditions")
     return jnp.squeeze(_projector(_classifier(jnp.concatenate([theta, x])[None, :])))
 
-
-# %% [markdown]
-# ### Check it before you trust it
-#
-# The check is not "are they equal" — they are not, and should not be. For a
-# **fixed $x$**,
-#
-# $$\log r(x, \theta) - \log p(x \mid \theta) = -\log p(x),$$
-#
-# a constant *in $\theta$*. So sweep $\theta$ and look at the **spread** of the
-# difference, not its value: flat means the shape is right, and the offset is
-# just the evidence. The interesting part is that the answer depends on *where*
-# you sweep.
-
-# %%
-import pytensor
-import pytensor.tensor as pt
-from hssm.likelihoods.analytical import logp_ddm
-
-# HSSM's analytic WFPT density, compiled to a plain numpy callable
-_d, _v, _a, _z, _t = pt.matrix("d"), *pt.scalars("v", "a", "z", "t")
-analytic_logp = pytensor.function([_d, _v, _a, _z, _t],
-                                  logp_ddm(_d, _v, _a, _z, _t),
-                                  on_unused_input="ignore")
-
-X_CHECK = np.array([[0.8, 1.0], [1.2, 1.0], [1.5, -1.0], [2.5, 1.0]])
-
-
-def residual_sd(theta_draws):
-    """Spread of (log r - log p) across theta, averaged over a few x values."""
-    out = []
-    for row in X_CHECK:
-        learned = np.array([float(nre_logp(jnp.asarray(row), *th)) for th in theta_draws])
-        true = np.array([analytic_logp(row[None, :], *th)[0] for th in theta_draws])
-        ok = np.isfinite(learned) & np.isfinite(true)
-        out.append(np.std((learned - true)[ok]))
-    return float(np.mean(out))
-
-
-true_vec = np.array([TRUE_SIM[p] for p in SIM_PARAMS])
-spread = BOX_HI - BOX_LO
-
-rows = []
-for radius, label in [(0.03, "posterior core"), (0.10, "moderate"),
-                      (0.25, "wide"), (None, "the whole training box")]:
-    draws = (rng.uniform(BOX_LO, BOX_HI, size=(120, 4)) if radius is None else
-             np.clip(rng.normal(true_vec, spread * radius, size=(120, 4)),
-                     BOX_LO, BOX_HI))
-    rows.append((label, residual_sd(draws)))
-
-print(f"{'theta neighbourhood':24s}  residual sd   (theory: 0)")
-for label, sd in rows:
-    print(f"{label:24s}  {sd:8.3f}")
-
-# %%
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
-near = np.clip(rng.normal(true_vec, spread * 0.03, size=(250, 4)), BOX_LO, BOX_HI)
-far = rng.uniform(BOX_LO, BOX_HI, size=(250, 4))
-
-for ax, draws, title in [(ax1, near, "Near the posterior"),
-                         (ax2, far, "Across the whole box")]:
-    for row, colour in zip(X_CHECK[[0, 2, 3]], [S.PRIMARY, S.NAIVE, S.ALT]):
-        true = np.array([analytic_logp(row[None, :], *th)[0] for th in draws])
-        learned = np.array([float(nre_logp(jnp.asarray(row), *th)) for th in draws])
-        ok = np.isfinite(learned) & np.isfinite(true)
-        ax.scatter(true[ok], (learned - true)[ok], s=9, alpha=0.5, color=colour,
-                   label=f"rt={row[0]}, ch={row[1]:+.0f}  "
-                         f"(sd {np.std((learned - true)[ok]):.2f})")
-    ax.set(xlabel=r"analytic $\log p(x\mid\theta)$", ylabel=r"$\log r - \log p$",
-           title=title)
-    ax.legend(fontsize=7)
-fig.suptitle("Flat within a colour = the learned shape is right", y=1.02)
-fig.tight_layout()
-
-# %% [markdown]
-# <details class="sbi-key" open>
-# <summary>🔑 <b>A learned likelihood is only as good as the region it was trained on</b></summary>
-#
-# Near the posterior the residual is nearly flat; across the full box it is
-# far larger — and **more training data does not fix it**. NRE learns by telling
-# *joint* pairs from *shuffled* ones, so it only gets signal where
-# $(\theta, x)$ actually co-occur. A slow RT paired with a $\theta$ that never
-# produces one appears in almost no joint examples, so there is nothing there to
-# learn from.
-#
-# The rule: **validate in the region your sampler will explore**, not uniformly
-# over the prior box. One global accuracy number will libel a network that is
-# perfectly good where it counts.
-#
-# </details>
-
 # %% [markdown]
 # ### Registering it
 #
@@ -814,8 +682,19 @@ fig.tight_layout()
 # `"ddm_nre"` is a model name like `"ddm"`.
 
 # %%
-# ssm-simulators' own wrapper turns the simulator into HSSM's random variable,
-# which is what makes posterior predictive sampling work.
+# Two ssm-simulators helpers, doing two different jobs:
+#
+#   hssm_sim_wrapper          adapts the call signature. HSSM invokes a simulator
+#                             as f(theta, n_replicas, random_state); ssms wants
+#                             f(theta, model, n_samples, ...). `partial` pins the
+#                             model name and the wrapper bridges the rest.
+#   decorate_atomic_simulator attaches metadata. It sets three attributes on the
+#                             function — model_name, choices, obs_dim — and does
+#                             nothing else. HSSM reads them to name the random
+#                             variable and to learn the response coding and how
+#                             many columns a trial has. Omit it and you get
+#                             "ValueError: The simulator function must have a
+#                             `model_name` attribute."
 nre_rv = decorate_atomic_simulator(
     model_name=SIM_MODEL, choices=[-1, 1], obs_dim=2
 )(partial(hssm_sim_wrapper, simulator_fun=simulator, model=SIM_MODEL))
@@ -837,8 +716,6 @@ hssm.register_model(
             # The training box, not a modelling preference. Outside it the
             # network extrapolates and returns confident nonsense.
             "bounds": dict(zip(SIM_PARAMS, zip(BOX_LO.tolist(), BOX_HI.tolist()))),
-            "default_priors": {},
-            "extra_fields": None,
         }
     },
 )
@@ -947,9 +824,9 @@ print(f"{pp.shape[0]} replicate datasets of {pp.shape[1]} trials")
 # uncertainty, which a single mean prediction hides.
 
 # %%
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
+fig, ax1 = plt.subplots(figsize=(6.5, 4))
 
-# --- left: defective RT densities, one thin line per replicate -------------
+# defective RT densities, one thin line per replicate
 bins = np.linspace(0, 4, 50)
 ctr = 0.5 * (bins[:-1] + bins[1:])
 width = np.diff(bins)[0]
@@ -968,45 +845,9 @@ for sign, colour, lbl in [(1, S.PRIMARY, "choice +1"), (-1, S.NAIVE, "choice -1"
 ax1.set(xlabel="rt (s)", ylabel="defective density",
         title="Predictive RT distributions\n(thin = one posterior draw)")
 ax1.legend(fontsize=8)
-
-# --- right: the speed/accuracy pair, as a predictive cloud ------------------
-ax2.scatter((pp[..., 1] > 0).mean(axis=1), pp[..., 0].mean(axis=1),
-            s=18, color=S.PRIMARY, alpha=0.5, label="posterior predictive")
-ax2.scatter((sim_data.response > 0).mean(), sim_data.rt.mean(),
-            marker="*", s=320, color="k", zorder=5, label="observed")
-ax2.set(xlabel="P(choice = +1)", ylabel="mean rt (s)",
-        title="Each point is one replicate dataset")
-ax2.legend(fontsize=8)
 fig.tight_layout()
 
 # %% [markdown]
-# The right-hand panel is the speed/accuracy view from yesterday's toy-model
-# session turned into a predictive cloud: the star should sit *inside* the
-# cloud, not beside it. A model can match the mean RT exactly and still be
-# refuted here, because the cloud shows what the model believes the *joint*
-# spread of speed and accuracy ought to be.
-
-# %% [markdown]
-# ## What to take away
-#
-# <details class="sbi-tip">
-# <summary>💡 <b>The five things that matter</b></summary>
-#
-#
-# 1. **HSSM is bambi for cognitive models.** A formula per *SSM parameter*,
-#    instead of `v[coh_idx]` by hand.
-# 2. **`print(model)` and `model.graph()` before you sample.** They resolve every
-#    prior, bound, link and the lapse process.
-# 3. **`p_outlier` is on by default at 0.05.** It is a robustifying floor on the
-#    likelihood, it is a modelling assumption, and you should report it.
-# 4. **Check the fit with SSM-specific plots** — quantile probability and the
-#    model cartoon — not just traces.
-# 5. **Any JAX function can be the likelihood** — including one you *learned*
-#    from a simulator. Register it in one place with `hssm.register_model`, and
-#    attach an `rv=` too, or you lose posterior predictive sampling.
-#
-# </details>
-#
 # ### Quick reference
 #
 # | want to | call |
