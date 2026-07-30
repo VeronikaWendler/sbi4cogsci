@@ -92,13 +92,13 @@ title: "Schedule"
 ## Day 4 — Thursday, July 30: Complex models and joint modeling
 
 - 09:00 **Introduction to joint modeling** (Turner & Nunez) — Reading: Palestro et al. (2018)
-- 09:30 **Joint modeling with EEG** (Nunez) — Reading: Nunez et al. (2024)
+- 09:30 **Joint modeling with EEG** (Nunez) — Reading: Nunez et al. (2024) [slides](tutorials/day4_complex_joint/SBI2026_Joint_Modeling_EEG_Nunez.pdf)
 - 10:00 **Joint modeling with fMRI** (Turner) — Reading: Turner et al. (2015)
 - 10:30 Morning coffee / tea
 - 10:45 **Exploratory modeling with moderational learning** (Zhao) — Reading: Zhao et al. (2025)
 - 12:00 **Advanced modeling with diffusion methods** (Radev) — Reading: Arruda et al. (2025)
 - 13:00 Lunch
-- 14:00 Joint modeling workshop: **using a deep neural network to build in covariation** (Nunez) — Reading: Ghaderi-Kangavari et al. (2023) · [materials](tutorials/day4_complex_joint/demo_single_trial_integrative_joint_modeling.ipynb)
+- 14:00 Joint modeling workshop: **using a deep neural network to build in covariation** (Nunez) — Reading: Ghaderi-Kangavari et al. (2023) · [slides](tutorials/day4_complex_joint/SBI2026_Tutorial_Nunez.pdf) [materials](tutorials/day4_complex_joint/demo_single_trial_integrative_joint_modeling.ipynb)
 - 14:45 Breakout group meetings
 - 16:00 Panel discussion with organizers + keynote speakers: future of SBI, open problems, career advice
 
