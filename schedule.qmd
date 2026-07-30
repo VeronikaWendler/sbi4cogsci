@@ -33,7 +33,7 @@ title: "Schedule"
 - 13:00 Lunch
 - 14:00 **Machine learning** (Kvam) — Reading: Kvam et al. (2024) · [slides](tutorials/day1_inference/Intro to machine learning.pdf)
 - 14:30 **Simulation-based inference** (Radev) — Reading: Cranmer et al. (2020)
-- 15:30 **Latent variable modeling** (Sokratous) — Reading: Khemakhem et al. (2020)
+- 15:30 **Latent variable modeling** (Sokratous) — Reading: Khemakhem et al. (2020) [slides](tutorials/day1_inference/2026_SBI_LVM_KS.pdf)
 - 16:00 Formation of breakout groups (~5 participants per group, matched with an organizer by topic)
 
 ::: {.callout-note collapse="true"}
